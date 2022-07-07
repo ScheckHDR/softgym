@@ -247,6 +247,52 @@ class PickerPickPlace(Picker):
         return model_actions, curr_pos
 
 
+
+class PickerTraj(Picker):
+    def __init__(self, num_picker, num_traj_points = 1000, env=None, picker_low=None, picker_high=None, **kwargs):
+        super().__init__(num_picker=num_picker,
+                         picker_low=picker_low,
+                         picker_high=picker_high,
+                         **kwargs)
+
+        picker_low, picker_high = list(picker_low), list(picker_high)
+        # assuming low = (0,0,0) and high = (1,1,1)
+        self.action_space = Box(np.zeros((num_picker,num_traj_points,len(picker_low))),
+                                np.ones((num_picker,num_traj_points,len(picker_low))),dtype=np.float32)
+        # self.action_space = Box(np.array([*picker_low, 0.] * self.num_picker),
+        #                         np.array([*picker_high, 1.] * self.num_picker), dtype=np.float32)
+        self.delta_move = 0.01
+        self.env = env
+
+    def _step(self,action):
+
+        # total_steps = 0
+        # curr_pos = np.array(pyflex.get_shape_states()).reshape(-1, 14)[:, :3]
+        # end_pos = np.vstack([self._apply_picker_boundary(picker_pos) for picker_pos in action[:, :3]])
+        # dist = np.linalg.norm(curr_pos - end_pos, axis=1)
+        # num_step = np.max(np.ceil(dist / self.delta_move))
+        # if num_step < 0.1:
+        #     return
+        # delta = (end_pos - curr_pos) / num_step
+        # norm_delta = np.linalg.norm(delta)
+
+        # TODO move to pick location
+
+        for i in range(action.shape[1]-1):  # The maximum number of steps allowed for one pick and place
+            curr_pos = np.array(pyflex.get_shape_states()).reshape(-1, 14)[:, :3]
+            end_pos = action[0,i+1,:]
+            dist = np.linalg.norm(end_pos - curr_pos, axis=1)
+
+            # if np.alltrue(dist < norm_delta):
+            #     delta = end_pos - curr_pos
+            super().step(np.hstack([dist, action[:, 3].reshape(-1, 1)]))
+            pyflex.step()
+            if self.env is not None and self.env.recording:
+                self.env.video_frames.append(self.env.render(mode='rgb_array'))
+            if np.alltrue(dist < self.delta_move):
+                break
+
+
 from softgym.utils.gemo_utils import intrinsic_from_fov, get_rotation_matrix
 
 

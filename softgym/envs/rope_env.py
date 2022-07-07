@@ -2,7 +2,7 @@ import numpy as np
 from gym.spaces import Box
 import pyflex
 from softgym.envs.flex_env import FlexEnv
-from softgym.action_space.action_space import Picker
+from softgym.action_space.action_space import Picker, PickerTraj
 from softgym.action_space.robot_env import RobotBase
 from copy import deepcopy
 
@@ -12,11 +12,12 @@ class RopeNewEnv(FlexEnv):
         self.render_mode = render_mode
         super().__init__(**kwargs)
 
-        assert observation_mode in ['point_cloud', 'cam_rgb', 'key_point']
-        assert action_mode in ['picker', 'sawyer', 'franka']
+        assert observation_mode in ['point_cloud', 'cam_rgb', 'key_point','topology','topo_and_key_point']
+        assert action_mode in ['picker', 'picker_trajectory', 'sawyer', 'franka']
         self.observation_mode = observation_mode
         self.action_mode = action_mode
         self.num_picker = num_picker
+        self.picker_radius = picker_radius
 
         if action_mode == 'picker':
             self.action_tool = Picker(num_picker, picker_radius=picker_radius, picker_threshold=0.005, 
@@ -24,7 +25,7 @@ class RopeNewEnv(FlexEnv):
             self.action_space = self.action_tool.action_space
         elif action_mode in ['sawyer', 'franka']:
             self.action_tool = RobotBase(action_mode)
-
+            
         if observation_mode in ['key_point', 'point_cloud']:
             if observation_mode == 'key_point':
                 obs_dim = 10 * 3
@@ -134,6 +135,9 @@ class RopeNewEnv(FlexEnv):
         max_x = np.max(pos[:, 0])
         max_y = np.max(pos[:, 2])
         return 0.5 * (min_x + max_x), 0.5 * (min_y + max_y)
+
+
+
 
 
 

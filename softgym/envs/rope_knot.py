@@ -23,8 +23,8 @@ class RopeKnotEnv(RopeNewEnv):
             self.action_tool = PickerTraj(self.num_picker, picker_radius=self.picker_radius, picker_threshold=0.005, 
             particle_radius=0.025, picker_low=(-0.35, 0., -0.35), picker_high=(0.35, 0.3, 0.35))
             self.action_space = Box(
-                -np.ones((1,6*self.num_picker)),
-                np.ones((1,6*self.num_picker))
+                np.array([-0.4,0,-0.4]*2*self.num_picker),
+                np.array([0.4,0,0.4]*2*self.num_picker)
             )
 
 
@@ -36,9 +36,6 @@ class RopeKnotEnv(RopeNewEnv):
             [2,1],
             [1,-1]
         ])
-
-        
-
 
     def _reset(self):
         config = self.current_config
@@ -115,16 +112,18 @@ class RopeKnotEnv(RopeNewEnv):
         return topo
      
     def _step(self, action):
+        action = np.clip(action,self.action_space.low,self.action_space.high)
         if self.action_mode == 'picker_trajectory':
             trajectories = []
             for picker in range(self.num_picker):
-                pick  = action[0,picker*6   :picker*6 +3]
-                place = action[0,picker*6 +3:picker*6 +6]
-                trajectories.append(generate_trajectory(pick,place,num_points=15))
+                pick  = action[picker*6   :picker*6 +3]
+                place = action[picker*6 +3:picker*6 +6]
+                trajectories.append(generate_trajectory(pick,place,num_points=150))
             action = np.concatenate(trajectories)
             action = action.reshape((2,action.shape[0]//2,3))
+            self.action_tool.step(action,renderer=self.render if not self.headless else lambda _ : '')
 
-        if self.action_mode.startswith('picker'):
+        elif self.action_mode.startswith('picker'):
             self.action_tool.step(action)
             pyflex.step()
         else:
@@ -164,10 +163,11 @@ class RopeKnotEnv(RopeNewEnv):
 
 
 def generate_trajectory(pick_loc, place_loc,num_points = 1000):
+    vertical_displacement = np.array([0,0.2,0])
     traj = np.concatenate([
-            generate_linear_trajectory(pick_loc,pick_loc+np.array([0,0,0.2]),num_points=num_points/3),
-            generate_linear_trajectory(pick_loc+np.array([0,0,0.2]),place_loc+np.array([0,0,0.2]),num_points=num_points/3),
-            generate_linear_trajectory(place_loc+np.array([0,0,0.2]),place_loc,num_points=num_points/3)
+            generate_linear_trajectory(pick_loc,pick_loc+vertical_displacement,num_points=num_points/3),
+            generate_linear_trajectory(pick_loc+vertical_displacement,place_loc+vertical_displacement,num_points=num_points/3),
+            generate_linear_trajectory(place_loc+vertical_displacement,place_loc,num_points=num_points/3)
     ])
 
     
@@ -176,4 +176,4 @@ def generate_trajectory(pick_loc, place_loc,num_points = 1000):
 
 def generate_linear_trajectory(start_pos,end_pos,num_points=1000, movement_time=3):
     
-    return np.linspace(start_pos,end_pos,int(num_points),endpoint=True)
+    return np.linspace(start_pos,end_pos,int(num_points),endpoint=True,dtype=float)

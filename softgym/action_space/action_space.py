@@ -4,6 +4,7 @@ from gym.spaces import Box
 from softgym.utils.misc import rotation_2d_around_center, extend_along_center
 import pyflex
 import scipy.spatial
+import time
 
 
 class ActionToolBase(metaclass=abc.ABCMeta):
@@ -248,7 +249,7 @@ class PickerPickPlace(Picker):
 
 
 
-class PickerTraj(Picker):
+class PickerTraj(PickerPickPlace):
     def __init__(self, num_picker, num_traj_points = 1000, env=None, picker_low=None, picker_high=None, **kwargs):
         super().__init__(num_picker=num_picker,
                          picker_low=picker_low,
@@ -264,7 +265,7 @@ class PickerTraj(Picker):
         self.delta_move = 0.01
         self.env = env
 
-    def _step(self,action):
+    def step(self,action):
 
         # total_steps = 0
         # curr_pos = np.array(pyflex.get_shape_states()).reshape(-1, 14)[:, :3]
@@ -276,21 +277,28 @@ class PickerTraj(Picker):
         # delta = (end_pos - curr_pos) / num_step
         # norm_delta = np.linalg.norm(delta)
 
-        # TODO move to pick location
+        print(time.time())
+        micro_action = np.zeros(4*action.shape[0])
+        # move to pick location
+        for picker_num in range(action.shape[0]):
+            micro_action[picker_num*4:picker_num*4 +3] = action[picker_num][0]
+            micro_action[picker_num*4+3] = 0 # no grasp.
+        super().step(micro_action)
 
-        for i in range(action.shape[1]-1):  # The maximum number of steps allowed for one pick and place
-            curr_pos = np.array(pyflex.get_shape_states()).reshape(-1, 14)[:, :3]
-            end_pos = action[0,i+1,:]
-            dist = np.linalg.norm(end_pos - curr_pos, axis=1)
+        # Move while grasping.
+        for i in range(1,action.shape[1]):
+            for picker_num in range(action.shape[0]):
+                micro_action[picker_num*4:picker_num*4 +3] = action[picker_num][i]
+                micro_action[picker_num*4+3] = 1 # grasp.
 
-            # if np.alltrue(dist < norm_delta):
-            #     delta = end_pos - curr_pos
-            super().step(np.hstack([dist, action[:, 3].reshape(-1, 1)]))
-            pyflex.step()
-            if self.env is not None and self.env.recording:
-                self.env.video_frames.append(self.env.render(mode='rgb_array'))
-            if np.alltrue(dist < self.delta_move):
-                break
+            super().step(micro_action)
+        
+        # Release object
+        for picker_num in range(action.shape[0]):
+            # position should still be set to the last position of trajectory.
+            micro_action[picker_num*4+3] = 0 # no grasp.
+        super().step(micro_action)
+
 
 
 from softgym.utils.gemo_utils import intrinsic_from_fov, get_rotation_matrix

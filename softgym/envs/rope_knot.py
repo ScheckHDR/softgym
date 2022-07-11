@@ -115,15 +115,15 @@ class RopeKnotEnv(RopeNewEnv):
         return topo
      
     def _step(self, action):
-        print(action)
         if self.action_mode == 'picker_trajectory':
             trajectories = []
             for picker in range(self.num_picker):
-                pick  = action[picker*6   :(picker+1)*6 +3]
-                place = action[picker*6 +3:(picker+1)*6 +6]
-                trajectories.append(generate_trajectory(pick,place))
-            action = np.array(trajectories)
-        
+                pick  = action[0,picker*6   :picker*6 +3]
+                place = action[0,picker*6 +3:picker*6 +6]
+                trajectories.append(generate_trajectory(pick,place,num_points=15))
+            action = np.concatenate(trajectories)
+            action = action.reshape((2,action.shape[0]//2,3))
+
         if self.action_mode.startswith('picker'):
             self.action_tool.step(action)
             pyflex.step()
@@ -163,12 +163,11 @@ class RopeKnotEnv(RopeNewEnv):
         return dict()
 
 
-def generate_trajectory(pick_loc, place_loc, spline_points):
-
+def generate_trajectory(pick_loc, place_loc,num_points = 1000):
     traj = np.concatenate([
-            generate_linear_trajectory(pick_loc,pick_loc+np.array([0,0,0.2]),num_points=333),
-            generate_linear_trajectory(pick_loc+np.array([0,0,0.2]),place_loc+np.array([0,0,0.2]),num_points=333),
-            generate_linear_trajectory(place_loc+np.array([0,0,0.2]),place_loc,num_points=333)
+            generate_linear_trajectory(pick_loc,pick_loc+np.array([0,0,0.2]),num_points=num_points/3),
+            generate_linear_trajectory(pick_loc+np.array([0,0,0.2]),place_loc+np.array([0,0,0.2]),num_points=num_points/3),
+            generate_linear_trajectory(place_loc+np.array([0,0,0.2]),place_loc,num_points=num_points/3)
     ])
 
     
@@ -177,5 +176,4 @@ def generate_trajectory(pick_loc, place_loc, spline_points):
 
 def generate_linear_trajectory(start_pos,end_pos,num_points=1000, movement_time=3):
     
-    delta = (end_pos - start_pos)/num_points
-    return start_pos + (delta * np.arange(0,num_points))
+    return np.linspace(start_pos,end_pos,int(num_points),endpoint=True)

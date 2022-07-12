@@ -64,7 +64,7 @@ env_arg_dict = {
                      'num_picker': 2,
                      'render': True,
                      'headless': True,
-                     'horizon': 10,  
+                     'horizon': 100,  # this task is harder than just straigtening rope, therefore has larger horizon.
                      'action_repeat': 8,
                      'render_mode': 'cloth',
                      'num_variations': 1000,

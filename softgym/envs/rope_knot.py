@@ -7,26 +7,47 @@ from copy import deepcopy
 from softgym.utils.pyflex_utils import random_pick_and_place, center_object
 from softgym.utils.topology import *
 from softgym.action_space.action_space import PickerTraj
-from gym.spaces import Box
+from gym.spaces import Box, Discrete, Dict
+from softgym.utils.trajectories import box_trajectory as default_trajectory
 
 class RopeKnotEnv(RopeNewEnv):
     def __init__(self, cached_states_path='rope_knot_init_states.pkl', **kwargs):
-
         kwargs['action_mode'] = 'picker_trajectory'
-
         super().__init__(cached_states_path=cached_states_path,**kwargs)
         if self.observation_mode in ['topology','topo_and_key_point']:
             # figure out what to do with the observation spaces for gym.
             raise NotImplementedError
 
+
+        self.headless = kwargs['headless']
+        self.trajectory_gen_funcs = kwargs.get(
+            'trajectory_funcs',
+            [default_trajectory]*kwargs.get('num_traj',1)
+        )
+        self.num_traj = kwargs.get('num_traj',len(self.trajectory_gen_funcs))
+
         if self.action_mode == 'picker_trajectory':
             self.action_tool = PickerTraj(self.num_picker, picker_radius=self.picker_radius, picker_threshold=0.005, 
             particle_radius=0.025, picker_low=(-0.35, 0., -0.35), picker_high=(0.35, 0.3, 0.35))
+<<<<<<< HEAD
+            # self.action_space = Box(
+            #     np.concatenate([[self.num_traj],[-0.4,-0.4]*2*self.num_picker]),
+            #     np.concatenate([[self.num_traj],[0.4 , 0.4]*2*self.num_picker])
+            # )
+            self.action_space = Dict({
+                "traj"  : Discrete(self.num_traj),
+                "params": Box(
+                    np.array([-0.4,-0.4]*2*self.num_picker),
+                    np.array([0.4 , 0.4]*2*self.num_picker)
+                ),
+            })
+=======
             self.action_space = Box(
-                np.array([-0.4,0,-0.4]*2*self.num_picker),
-                np.array([0.4,0,0.4]*2*self.num_picker)
+                -np.ones((1,6*self.num_picker)),
+                np.ones((1,6*self.num_picker))
             )
 
+>>>>>>> parent of d71d14c (Basic synchronised (individual) trajectories working)
 
 
         self.get_cached_configs_and_states(cached_states_path, self.num_variations)
@@ -36,6 +57,9 @@ class RopeKnotEnv(RopeNewEnv):
             [2,1],
             [1,-1]
         ])
+
+        
+
 
     def _reset(self):
         config = self.current_config
@@ -112,20 +136,40 @@ class RopeKnotEnv(RopeNewEnv):
         return topo
      
     def _step(self, action):
-        action = np.clip(action,self.action_space.low,self.action_space.high)
+<<<<<<< HEAD
+        print(action)
+        # action should be [traj_func_index, pick(xy),place(xy),pick2,place2 .....] depending on number of pickers, and sub-policy outputs
+        traj_index = action['traj']
+        action_params = action['params']
+
+        action_params = np.clip(action_params,self.action_space['params'].low,self.action_space['params'].high)
         if self.action_mode == 'picker_trajectory':
             trajectories = []
             for picker in range(self.num_picker):
-                pick  = action[picker*6   :picker*6 +3]
-                place = action[picker*6 +3:picker*6 +6]
-                trajectories.append(generate_trajectory(pick,place,num_points=150))
+                pick  = action_params[picker*4   :picker*4 +2]
+                place = action_params[picker*4 +2:picker*4 +4]
+                trajectories.append(self.trajectory_gen_funcs[traj_index](pick,place,num_points=150))
+            traj_action = np.concatenate(trajectories)
+            traj_action = traj_action.reshape((2,traj_action.shape[0]//2,3))
+            self.action_tool.step(traj_action,renderer=self.render if not self.headless else lambda *args, **kwargs : None)
+
+        # elif self.action_mode.startswith('picker'):
+        #     self.action_tool.step(action)
+        #     pyflex.step()
+=======
+        if self.action_mode == 'picker_trajectory':
+            trajectories = []
+            for picker in range(self.num_picker):
+                pick  = action[0,picker*6   :picker*6 +3]
+                place = action[0,picker*6 +3:picker*6 +6]
+                trajectories.append(generate_trajectory(pick,place,num_points=15))
             action = np.concatenate(trajectories)
             action = action.reshape((2,action.shape[0]//2,3))
-            self.action_tool.step(action,renderer=self.render if not self.headless else lambda _ : '')
 
-        elif self.action_mode.startswith('picker'):
+        if self.action_mode.startswith('picker'):
             self.action_tool.step(action)
             pyflex.step()
+>>>>>>> parent of d71d14c (Basic synchronised (individual) trajectories working)
         else:
             raise NotImplementedError
         return
@@ -160,14 +204,15 @@ class RopeKnotEnv(RopeNewEnv):
 
     def _get_info(self):
         return dict()
+<<<<<<< HEAD
+=======
 
 
 def generate_trajectory(pick_loc, place_loc,num_points = 1000):
-    vertical_displacement = np.array([0,0.2,0])
     traj = np.concatenate([
-            generate_linear_trajectory(pick_loc,pick_loc+vertical_displacement,num_points=num_points/3),
-            generate_linear_trajectory(pick_loc+vertical_displacement,place_loc+vertical_displacement,num_points=num_points/3),
-            generate_linear_trajectory(place_loc+vertical_displacement,place_loc,num_points=num_points/3)
+            generate_linear_trajectory(pick_loc,pick_loc+np.array([0,0,0.2]),num_points=num_points/3),
+            generate_linear_trajectory(pick_loc+np.array([0,0,0.2]),place_loc+np.array([0,0,0.2]),num_points=num_points/3),
+            generate_linear_trajectory(place_loc+np.array([0,0,0.2]),place_loc,num_points=num_points/3)
     ])
 
     
@@ -176,4 +221,5 @@ def generate_trajectory(pick_loc, place_loc,num_points = 1000):
 
 def generate_linear_trajectory(start_pos,end_pos,num_points=1000, movement_time=3):
     
-    return np.linspace(start_pos,end_pos,int(num_points),endpoint=True,dtype=float)
+    return np.linspace(start_pos,end_pos,int(num_points),endpoint=True)
+>>>>>>> parent of d71d14c (Basic synchronised (individual) trajectories working)

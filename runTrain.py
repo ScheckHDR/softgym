@@ -1,6 +1,10 @@
-from softgym.envs.rope_knot import RopeKnotEnv
 import argparse
+
+
+
+from softgym.envs.rope_knot import RopeKnotEnv
 from softgym.utils.normalized_env import normalize
+from softgym.utils.trajectories import box_trajectory, curved_trajectory, curved_trajectory
 
 
 def main(model,env_args):
@@ -9,6 +13,11 @@ def main(model,env_args):
     for _ in range(env_args['horizon']):
         action = env.action_space.sample()
         env.step(action,record_continuous_video=True,img_size=720)
+
+
+
+
+
 # ------------- Helper functions ----------------------
 
 def get_args():
@@ -42,7 +51,7 @@ if __name__ == '__main__':
     env_kwargs = {
         'observation_mode': 'cam_rgb',
         'action_mode': 'picker_trajectory',
-        'num_picker': 2,
+        'num_picker': 1,
         'render': True,
         'headless': args.headless,
         'horizon': args.horizon,
@@ -52,7 +61,12 @@ if __name__ == '__main__':
         'use_cached_states': False,
         'save_cached_states': False,
         'deterministic': False,
+        'trajectory_funcs': [
+            box_trajectory,
+            curved_trajectory,
+        ]
     }
+
 
     main(None,env_kwargs)
 

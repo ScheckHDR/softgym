@@ -265,7 +265,7 @@ class PickerTraj(PickerPickPlace):
         self.delta_move = 0.01
         self.env = env
 
-    def step(self,action,renderer):
+    def step(self,action):
 
         # total_steps = 0
         # curr_pos = np.array(pyflex.get_shape_states()).reshape(-1, 14)[:, :3]
@@ -277,6 +277,7 @@ class PickerTraj(PickerPickPlace):
         # delta = (end_pos - curr_pos) / num_step
         # norm_delta = np.linalg.norm(delta)
 
+        print(time.time())
         micro_action = np.zeros(4*action.shape[0])
         # move to pick location
         for picker_num in range(action.shape[0]):
@@ -290,7 +291,6 @@ class PickerTraj(PickerPickPlace):
                 micro_action[picker_num*4:picker_num*4 +3] = action[picker_num][i]
                 micro_action[picker_num*4+3] = 1 # grasp.
 
-            renderer(mode='rgb_array')
             super().step(micro_action)
         
         # Release object

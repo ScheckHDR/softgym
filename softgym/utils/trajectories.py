@@ -16,7 +16,7 @@ def box_trajectory(pick_loc, place_loc,num_points = 1000,height=0.2):
 
 def curved_trajectory(start_pos,end_pos,num_points=1000,height=0.2,rot_dir=1):
     
-    offset = ((start_pos - end_pos)/2)[[0,2]]
+    offset = ((start_pos - end_pos)/2)
     mid_point = end_pos + offset
     height_delta =  height/num_points/2
 
@@ -27,7 +27,7 @@ def curved_trajectory(start_pos,end_pos,num_points=1000,height=0.2,rot_dir=1):
             [sin(theta*rot_dir), cos(theta*rot_dir)]
         ])
         traj_point = np.array([0,height_delta*i,0])
-        traj_point[[0,2]] = np.dot(rot,offset) 
+        traj_point[[0,2]] = mid_point + np.dot(rot,offset) 
         traj.append(traj_point)
     
     for i, theta in enumerate(np.linspace(pi/2,pi,int(num_points/2),endpoint=True)):
@@ -36,7 +36,7 @@ def curved_trajectory(start_pos,end_pos,num_points=1000,height=0.2,rot_dir=1):
             [sin(theta*rot_dir), cos(theta*rot_dir)]
         ])
         traj_point = np.array([0,height-height_delta*i,0])
-        traj_point[[0,2]] = np.dot(rot,offset) 
+        traj_point[[0,2]] = mid_point + np.dot(rot,offset) 
         traj.append(traj_point)
 
     return traj

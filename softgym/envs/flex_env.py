@@ -189,7 +189,7 @@ class FlexEnv(gym.Env):
             self.video_frames.append(self.render(mode='rgb_array'))
         self.time_step += 1
 
-        done = False
+        done = self._is_done()
         if self.time_step >= self.horizon:
             done = True
         if record_continuous_video:
@@ -249,6 +249,9 @@ class FlexEnv(gym.Env):
     def compute_reward(self, action=None, obs=None, set_prev_reward=False):
         """ set_prev_reward is used for calculate delta rewards"""
         raise NotImplementedError
+
+    def _is_done(self):
+        return False
 
     def _get_obs(self):
         raise NotImplementedError

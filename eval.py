@@ -1,5 +1,5 @@
 import argparse
-from copy import deepcopy
+
 from softgym.envs.rope_knot import RopeKnotEnv
 from softgym.utils.normalized_env import normalize
 from softgym.utils.trajectories import box_trajectory, curved_trajectory, curved_trajectory
@@ -8,82 +8,37 @@ from stable_baselines3 import A2C
 from stable_baselines3.common.vec_env.subproc_vec_env import SubprocVecEnv
 from stable_baselines3.common.monitor import Monitor
 from stable_baselines3.common.logger import configure
+from stable_baselines3.common.evaluation import evaluate_policy
 def main(env_args,other_args):
-    
-    ''' Something is broken, need to render all of them on my PC '''
-    # extra_env_args = deepcopy(env_args)
-    # extra_env_args['headless'] = True # Don't need to display all envs
-    # start_funcs = \
-    #     [lambda: normalize(RopeKnotEnv(**env_args))]\
-    #     +[lambda: normalize(RopeKnotEnv(**extra_env_args))]*(env_args['n_envs']-1)
-    # envs = SubprocVecEnv(start_funcs,'spawn')
-
     envs = SubprocVecEnv([lambda: normalize(Monitor(RopeKnotEnv(**env_args)))]*other_args.num_workers,'spawn')
-    # envs = normalize(RopeKnotEnv(**env_kwargs))
 
-    # model = A2C(
-    #     'MlpPolicy',
-    #     env,
-    #     verbose=1,
-    #     # n_steps = 2,
-    #     gamma=0.7,
-    #     learning_rate = 1e-2
-    # )
-    model = A2C(
-        'MlpPolicy',
+    model = A2C.load(other_args.model_path)
+    # model.set_logger(configure(f'{other_args.model_path}_eval_log',["stdout", "csv"]))
+
+    evaluate_policy(
+        model,
         envs,
-        verbose=1,
-        # n_steps = 2,
-        gamma=0.9,
-        learning_rate = 1e-3
+        n_eval_episodes=100,
+        deterministic=True,
+        render=True,
     )
-    model.set_logger(configure(f'{other_args.save_name}_log',["stdout", "csv"]))
-    print(model.policy)
-    # print(model)
-    model.learn(
-        total_timesteps=5000,
-        log_interval = 1,
-    )
-    
-    model.save(other_args.save_name)
-    envs.close()
 
-    # print('Evaluating')
-    # obs = envs.reset()
-    # for i in range(100):
-    #     action, _state = model.predict(obs,deterministic=True)
-    #     obs, reward, done, info = envs.step(action,record_continuous_video=True,img_size=720)
-    #     if done:
-    #         obs = envs.reset()
-
-    # for _ in range(env_args['horizon']):
-    #     action = env.action_space.sample()
-    #     obs, reward, done, info = env.step(action,record_continuous_video=True,img_size=720)
-    #     print(env._get_topological_representation())
-    #     if done:
-    #         print('Reached Target')
-
-
-
-
-
-# ------------- Helper functions ----------------------
 
 def get_args():
     parser = argparse.ArgumentParser()
     
+    parser.add_argument('model_path',type=str,help='The model to be evauluated.')
+    
     parser.add_argument('-headless', action='store_true', help='Whether to run the environment with headless rendering')
     
-    parser.add_argument('--save_name',type=str,default='./output/TEMP',help='The directory to place generated models.')
     parser.add_argument('--num_workers',type=int,default=1,help='How many workers to run in parallel generating data for the model being trained.')
 
     # Environment options
     parser.add_argument('--num_variations', type=int, default=1, help='Number of environment variations to be generated')
     parser.add_argument('--horizon',type=int,default=10,help='The length of each episode.')
-    parser.add_argument('--pickers',type=int,default=2)
+    parser.add_argument('--pickers',type=int,default=1)
     parser.add_argument('--render_mode',type=str,default='cloth',help='The render mode of the object. Must be from the set \{cloth, particle, both\}.')
-    parser.add_argument('--maximum_crossings',type=int,default=5,help='The maximum number of crossings for topological representations. Any representation exceeding this will be clipped down.')
-    parser.add_argument('--goal_crossings',type=int,default=2,help='The number of crossings used for the goal configuration.')
+    parser.add_argument('--maximum_crossings',type=int,default=5,help='The maximum number of crossings for topological representations.')
     
     args = parser.parse_args()    
     args.render_mode = args.render_mode.lower()
@@ -102,7 +57,7 @@ if __name__ == '__main__':
     env_kwargs = {
         'observation_mode': 'key_point',
         'action_mode': 'picker_trajectory',
-        'num_picker': 1,
+        'num_picker': args.pickers,
         'render': True,
         'headless': args.headless,
         'horizon': args.horizon,
@@ -111,15 +66,13 @@ if __name__ == '__main__':
         'num_variations': args.num_variations,
         'use_cached_states': False,
         'save_cached_states': False,
-        'deterministic': False,
+        'deterministic': True,
         'trajectory_funcs': [
             box_trajectory,
             curved_trajectory,
         ],
         'maximum_crossings':args.maximum_crossings,
-        'goal_crossings': args.goal_crossings,
     }
 
 
     main(env_kwargs,args)
-

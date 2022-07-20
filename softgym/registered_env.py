@@ -59,7 +59,7 @@ env_arg_dict = {
                           'num_variations': 1000,
                           'use_cached_states': True,
                           'deterministic': False},
-    'RopeKnotting': {'observation_mode': 'cam_rgb',
+    'RopeKnotting': {'observation_mode': 'key_point',
                      'action_mode': 'picker',
                      'num_picker': 2,
                      'render': True,

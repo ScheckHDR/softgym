@@ -19,9 +19,14 @@ class RopeNewEnv(FlexEnv):
         self.num_picker = num_picker
         self.picker_radius = picker_radius
 
+        self.workspace = np.array([
+            [-0.35, 0. ,-0.35],
+            [ 0.35, 0.3, 0.35]
+        ])
+
         if action_mode == 'picker':
             self.action_tool = Picker(num_picker, picker_radius=picker_radius, picker_threshold=0.005, 
-            particle_radius=0.025, picker_low=(-0.35, 0., -0.35), picker_high=(0.35, 0.3, 0.35))
+            particle_radius=0.025, picker_low=self.workspace[0,:], picker_high=self.workspace[1,:])
             self.action_space = self.action_tool.action_space
         elif action_mode in ['sawyer', 'franka']:
             self.action_tool = RobotBase(action_mode)
@@ -33,11 +38,11 @@ class RopeNewEnv(FlexEnv):
                 max_particles = 41
                 obs_dim = max_particles * 3
                 self.particle_obs_dim = obs_dim
-            if action_mode in ['picker']:
+            if action_mode.startswith('picker'):
                 obs_dim += num_picker * 3
             else:
                 raise NotImplementedError
-            self.observation_space = Box(np.array([-np.inf] * obs_dim), np.array([np.inf] * obs_dim), dtype=np.float32)
+            self.observation_space = Box(np.array([-1] * obs_dim), np.array([1] * obs_dim), dtype=np.float32)
         elif observation_mode == 'cam_rgb':
             self.observation_space = Box(low=-np.inf, high=np.inf, shape=(self.camera_height, self.camera_width, 3),
                                          dtype=np.float32)

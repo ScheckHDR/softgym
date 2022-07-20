@@ -14,11 +14,16 @@ def box_trajectory(pick_loc, place_loc,num_points = 1000,height=0.2):
     ])
     return traj
 
-def curved_trajectory(start_pos,end_pos,num_points=1000,height=0.2,rot_dir=1):
+def curved_trajectory(pick_loc,place_loc,num_points=1000,height=0.2,rot_dir=1):
+    if len(pick_loc) == 3:
+        pick_loc = pick_loc[[0,2]]
+    if len(place_loc) == 3:
+        place_loc = place_loc[[0,2]]
+
     
-    offset = ((start_pos - end_pos)/2)
-    mid_point = end_pos + offset
-    height_delta =  height/num_points/2
+    offset = ((pick_loc - place_loc)/2)
+    mid_point = place_loc + offset
+    height_delta =  height/(num_points/2)
 
     traj = []
     for i,theta in enumerate(np.linspace(0,pi/2,int(num_points/2),endpoint=False)):

@@ -296,6 +296,7 @@ class PickerTraj(PickerPickPlace):
         # Release object
         for picker_num in range(action.shape[0]):
             # position should still be set to the last position of trajectory.
+            micro_action[picker_num*4+1] += 1 # lift away from the table.
             micro_action[picker_num*4+3] = 0 # no grasp.
         super().step(micro_action)
 

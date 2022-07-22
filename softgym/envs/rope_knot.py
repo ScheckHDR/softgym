@@ -113,7 +113,11 @@ class RopeKnotEnv(RopeNewEnv):
                 #     np.array([-0.4,-0.4]*2*self.num_picker),
                 #     np.array([ 0.4, 0.4]*2*self.num_picker)
                 # ),
-                "pick" : Discrete(10),
+                # "pick" : Discrete(10),
+                "pick": Box(
+                    np.array([-1]*self.num_picker),
+                    np.array([ 1]*self.num_picker)
+                ),
                 "place": Box(
                     np.array([-1,-1]*self.num_picker),
                     np.array([ 1, 1]*self.num_picker)
@@ -194,8 +198,8 @@ class RopeKnotEnv(RopeNewEnv):
         # action should be [traj_func_index, pick(xy),place(xy),pick2,place2 .....] depending on number of pickers, and sub-policy outputs
         traj_index = action['traj'].value
         action["pick"].clip()
-        if action["pick"].type == Box:
-            action["pick"].rescale(self.workspace[0,[0,2]],self.workspace[1,[0,2]])
+        # if action["pick"].type == Box:
+        #     action["pick"].rescale(self.workspace[0,[0,2]],self.workspace[1,[0,2]])
 
         action["place"].clip()
         action["place"].rescale(self.workspace[0,[0,2]],self.workspace[1,[0,2]])       
@@ -218,7 +222,10 @@ class RopeKnotEnv(RopeNewEnv):
                 if action["pick"].type == Discrete:
                     pick = pyflex.get_positions().reshape((-1, 4))[self.key_point_indices][action["pick"].value, :3]
                 elif action["pick"].type == Box:
-                    pick = action["pick"].value[picker*2:picker*2 +2],                        
+                    points = pick = pyflex.get_positions().reshape((-1, 4))[self.key_point_indices]
+                    pick_idx = round(((action["pick"].value[picker]*0.5) + 0.5) * len(points)) -1
+                    pick = points[pick_idx,:3]
+                    # pick = action["pick"].value[picker*2:picker*2 +2],                        
                 else:
                     raise NotImplementedError
                 place = action["place"].value[picker*2:picker*2 +2]
@@ -239,6 +246,8 @@ class RopeKnotEnv(RopeNewEnv):
 
         particle_pos = np.array(pyflex.get_positions()).reshape([-1, 4])[:, :3]
         keypoint_pos = particle_pos[self.key_point_indices, :3]
+        for i in range(1,keypoint_pos.shape[0]):
+            keypoint_pos[i,:] -= keypoint_pos[i-1,:]
         topo = self._get_topological_representation()
         obs = np.concatenate([topo.flatten(),self.goal_configuration.flatten(),keypoint_pos.flatten()])
         return obs
@@ -269,6 +278,12 @@ class RopeKnotEnv(RopeNewEnv):
         #     shapes = np.reshape(shapes, [-1, 14])
         #     pos = np.concatenate([pos.flatten(), shapes[:, :3].flatten()])
         # return pos
+
+
+    def _get_keypoints(self):
+        particle_pos = np.array(pyflex.get_positions()).reshape([-1, 4])[:, :3]
+        return particle_pos[self.key_point_indices, :3]
+
 
     def _get_info(self):
         return dict()

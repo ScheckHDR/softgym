@@ -2,12 +2,26 @@ import argparse
 from copy import deepcopy
 from softgym.envs.rope_knot import RopeKnotEnv
 from softgym.utils.normalized_env import normalize
+from softgym.utils.topology import get_topological_representation
 from softgym.utils.trajectories import box_trajectory, curved_trajectory, curved_trajectory
 
 from stable_baselines3 import A2C
 from stable_baselines3.common.vec_env.subproc_vec_env import SubprocVecEnv
 from stable_baselines3.common.monitor import Monitor
 from stable_baselines3.common.logger import configure
+
+import csv
+import numpy as np
+
+
+def which_reidemeister(prev,new):
+    if np.all(prev==new):
+        return 0
+    
+    if new.shape[1] - 2 == prev.shape[1]:
+        #possible R1
+        pass
+
 def main(env_args,other_args):
     
     ''' Something is broken, need to render all of them on my PC '''
@@ -19,52 +33,26 @@ def main(env_args,other_args):
     # envs = SubprocVecEnv(start_funcs,'spawn')
 
     envs = SubprocVecEnv([lambda: normalize(Monitor(RopeKnotEnv(**env_args)))]*other_args.num_workers,'spawn')
-    # envs = normalize(RopeKnotEnv(**env_kwargs))
 
-    # model = A2C(
-    #     'MlpPolicy',
-    #     env,
-    #     verbose=1,
-    #     # n_steps = 2,
-    #     gamma=0.7,
-    #     learning_rate = 1e-2
-    # )
-    model = A2C(
-        'MlpPolicy',
-        envs,
-        verbose=1,
-        n_steps = 10,
-        gamma=0.9,
-        learning_rate = 1e-3,
-        ent_coef=5e-2, # no higher than 1e-2?
-    )
-    model.set_logger(configure(f'{other_args.save_name}_log',["stdout", "csv"]))
-    print(model.policy)
-    # print(model)
-    model.learn(
-        total_timesteps=50000,
-        log_interval = 1,
-    )
-    
-    model.save(other_args.save_name)
+    prev_topologies = envs._get_topological_representation()
+    with open('test.csv','w') as csvfile:
+        csv_writer = csv.writer(csvfile,delimiter=',')
+        for i in range(int(1000/other_args.num_workers)):
+            actions = envs.action_space.sample()
+            envs.step(actions,record_continuous_video=True,img_size=720)
+            ropes = envs._get_keypoints()
+            new_topologies = envs._get_topological_representation()
+
+            for i in range(len(ropes)):
+                move = which_reidemeister(prev_topologies[i],new_topologies[i])
+                csv_writer.writerow([ropes[i],actions[i],prev_topologies[i],move])
+
+            prev_topologies = deepcopy(new_topologies)
+
+
+
+
     envs.close()
-
-    # print('Evaluating')
-    # obs = envs.reset()
-    # for i in range(100):
-    #     action, _state = model.predict(obs,deterministic=True)
-    #     obs, reward, done, info = envs.step(action,record_continuous_video=True,img_size=720)
-    #     if done:
-    #         obs = envs.reset()
-
-    # for _ in range(env_args['horizon']):
-    #     action = env.action_space.sample()
-    #     obs, reward, done, info = env.step(action,record_continuous_video=True,img_size=720)
-    #     print(env._get_topological_representation())
-    #     if done:
-    #         print('Reached Target')
-
-
 
 
 

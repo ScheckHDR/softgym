@@ -1,7 +1,7 @@
 import numpy as np
 from math import cos, sin, pi
 
-def box_trajectory(pick_loc, place_loc,num_points = 1000,height=0.2):
+def box_trajectory(pick_loc, place_loc,num_points = 1000,height=0.1):
     vertical_displacement = np.array([0,height,0])
     if len(pick_loc) == 2:
         pick_loc = np.insert(pick_loc,1,0)
@@ -14,7 +14,7 @@ def box_trajectory(pick_loc, place_loc,num_points = 1000,height=0.2):
     ])
     return traj
 
-def curved_trajectory(pick_loc,place_loc,num_points=1000,height=0.2,rot_dir=1):
+def curved_trajectory(pick_loc,place_loc,num_points=1000,height=0.1,rot_dir=1):
     if len(pick_loc) == 3:
         pick_loc = pick_loc[[0,2]]
     if len(place_loc) == 3:

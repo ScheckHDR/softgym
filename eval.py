@@ -39,6 +39,7 @@ def get_args():
     parser.add_argument('--pickers',type=int,default=1)
     parser.add_argument('--render_mode',type=str,default='cloth',help='The render mode of the object. Must be from the set \{cloth, particle, both\}.')
     parser.add_argument('--maximum_crossings',type=int,default=5,help='The maximum number of crossings for topological representations.')
+    parser.add_argument('--goal_crossings',type=int,default=2,help='The number of crossings used for the goal configuration.')
     
     args = parser.parse_args()    
     args.render_mode = args.render_mode.lower()
@@ -72,6 +73,7 @@ if __name__ == '__main__':
             curved_trajectory,
         ],
         'maximum_crossings':args.maximum_crossings,
+        'goal_crossings': args.goal_crossings,
     }
 
 

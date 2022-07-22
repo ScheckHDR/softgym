@@ -32,6 +32,32 @@ def get_topological_representation(positions):
         ]
     return topo
 
+
+# def is_knot(topo):
+
+#     if topo.size == 0:
+#         # Topology got reduced to the trivial state.
+#         return False
+
+#     #R0 (made up) - if simplification winds up with a "crossing" with only a single index
+#     if np.any(topo[0,:] == topo[1,:]):
+#         # remove stuff
+#         reduced_topo = topo
+#         return is_knot(reduced_topo)
+    
+#     for i in range(topo.shape[1]-1):
+#         # R1 - A crossing with its corresponding entrance in the next column.
+#         if np.all(topo[:2,i] == topo[2::-1,i+1]):
+#             # remove stuff
+#             reduced_topo = topo
+#             return is_knot(reduced_topo)
+
+#         # R2 - A 
+
+
+#     return True
+
+
 def compare_topology(topo1, topo2):
     if np.all(topo1 == topo2) \
         or np.all(topo1 == flip_topology(topo2))\

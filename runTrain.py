@@ -101,12 +101,12 @@ def main(default_config):
         monitor_gym=False,
         save_code=False
     )
-    env_args = {
+    env_kwargs = {
         'observation_mode': wandb.config.observation_mode,
         'action_mode': wandb.config.action_mode,
         'num_picker': wandb.config.num_picker,
         'render': wandb.config.render,
-        'headless': wandb.configheadless,
+        'headless': wandb.config.headless,
         'horizon': wandb.config.horizon,
         'action_repeat': wandb.config.action_repeat,
         'render_mode': wandb.config.render_mode,
@@ -119,7 +119,6 @@ def main(default_config):
         'goal_crossings': wandb.config.goal_crossings,
     }
     
-
     if not hasattr(wandb.config,'algorithm'):
         algorithm = A2C
     else:
@@ -132,38 +131,43 @@ def main(default_config):
         elif wandb.config.algorithm == 'DQN':
             algorithm = DQN
 
+
+
+    training_kwargs = {
+        'gamma' : wandb.config.gamma,
+        'learning_rate' : wandb.config.learning_rate,
+        'ent_coef' : wandb.config.ent_coef, 
+    }
+    if algorithm is not SAC:
+        training_kwargs['n_steps'] = wandb.config.n_steps,
+
     try:
-        envs = SubprocVecEnv([lambda: normalize(Monitor(RopeKnotEnv(**env_args)))]*static_arguments['num_workers'],'spawn')
+        envs = SubprocVecEnv([lambda: normalize(Monitor(RopeKnotEnv(**env_kwargs)))]*wandb.config.num_workers,'spawn')
         model = algorithm(
             wandb.config.policy_type,
             envs,
             verbose = 1,
-            n_steps = wandb.config.n_steps if hasattr(wandb.config,'n_steps') else static_arguments.get('n_steps',5),
-            gamma = wandb.config.gamma,
-            learning_rate = wandb.config.learning_rate,
-            ent_coef= wandb.config.ent_coef, 
+            **training_kwargs  
         )
     except ValueError:
-        envs = normalize(RopeKnotEnv(**env_args))
+        envs = normalize(RopeKnotEnv(**env_kwargs))
         model = algorithm(
             wandb.config.policy_type,
             envs,
             verbose = 1,
-            n_steps = wandb.config.n_steps if hasattr(wandb.config,'n_steps') else static_arguments.get('n_steps',5),
-            gamma = wandb.config.gamma,
-            learning_rate = wandb.config.learning_rate,
-            ent_coef= wandb.config.ent_coef, 
+            **training_kwargs  
         )
+
+
     # model.set_logger(configure(f'{other_args.save_name}_log',["stdout", "csv"]))
-    print(model.policy)
-    # print(model)
+    print(model)
     model.learn(
-        total_timesteps= static_arguments['total_timesteps'],
+        total_timesteps= wandb.config.total_timesteps,
         log_interval = 1,
         callback=CallbackList([
             WandbCallback(
                 gradient_save_freq=100,
-                model_save_path=f'{static_arguments["save_name"]}/models/{run.id}',
+                model_save_path=f'{wandb.config.save_name}/models/{run.id}',
                 verbose=2,
             ),
             CustomCallback(verbose=2),
@@ -205,7 +209,7 @@ def get_args():
     assert args.horizon > 0, f'Horizon length must be a positive integer. You entered {args.horizon}.'
     assert args.pickers > 0, f'Number of pickers must be a positive integer. You entered {args.pickers}.'
     assert args.render_mode in ('cloth','particle','both'), f'Render_mode must be from the set {{cloth, particle, both}}. You entered {args.render_mode}.'
-    assert args.render_mode >= 0, f'num_sweeps must be a non-negative whole number. You entered {args.num_sweeps}'
+    assert args.num_sweeps >= 0, f'num_sweeps must be a non-negative whole number. You entered {args.num_sweeps}'
 
     return args
 
@@ -270,7 +274,7 @@ if __name__ == '__main__':
         'trajectory_funcs'  : [box_trajectory],
 
         # Training hyperparameters
-        'algorithm'         : 'A2C',
+        'algorithm'         : 'PPO',
         'learning_rate'     : 1e-3,
         'ent_coef'          : 1e-2,
         'gamma'             : 0.9,

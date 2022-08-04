@@ -8,7 +8,7 @@ from softgym.utils.pyflex_utils import random_pick_and_place, center_object
 from softgym.utils.topology import *
 from softgym.action_space.action_space import PickerTraj
 from gym.spaces import Box, Discrete, Dict
-from softgym.utils.trajectories import box_trajectory as default_trajectory
+import softgym.utils.trajectories
 
 from scipy.special import softmax
 
@@ -80,13 +80,17 @@ class RopeKnotEnv(RopeNewEnv):
             # figure out what to do with the observation spaces for gym.
             raise NotImplementedError
 
-
         self.headless = kwargs['headless']
-        self.trajectory_gen_funcs = kwargs.get(
-            'trajectory_funcs',
-            [default_trajectory]*kwargs.get('num_traj',1)
-        )
-        self.num_traj = kwargs.get('num_traj',len(self.trajectory_gen_funcs))
+
+        # Because wandb converted the function pointers to strings, need to convert them back.
+        if 'trajectory_funcs' in kwargs:
+            self.trajectory_gen_funcs = []
+            for func in kwargs['trajectory_funcs']:
+                self.trajectory_gen_funcs.append(getattr(softgym.utils.trajectories,func.split('.')[-1]))
+        else:
+            self.trajectory_gen_funcs = [softgym.utils.trajectories.box_trajectory]
+
+        self.num_traj = len(self.trajectory_gen_funcs)
         self.maximum_crossings = kwargs['maximum_crossings']
         self.goal_crossings = kwargs['goal_crossings']
         # self.goal_configuration = np.array([
@@ -232,7 +236,6 @@ class RopeKnotEnv(RopeNewEnv):
                 else:
                     raise NotImplementedError
                 place = action["place"].value[picker*2:picker*2 +2]
-
 
                 trajectories.append(self.trajectory_gen_funcs[traj_index](pick,place,num_points=150))
             traj_action = np.concatenate(trajectories)

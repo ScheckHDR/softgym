@@ -108,12 +108,7 @@ class RopeKnotEnv(RopeNewEnv):
             #     np.concatenate([[self.num_traj],[ 0.4, 0.4]*2*self.num_picker])
             # )
             self.action_space = MixedActionSpace({
-                "traj"  : Discrete(self.num_traj),
-                # "pick": Box(
-                #     np.array([-0.4,-0.4]*2*self.num_picker),
-                #     np.array([ 0.4, 0.4]*2*self.num_picker)
-                # ),
-                # "pick" : Discrete(10),
+                # "traj"  : Discrete(self.num_traj),
                 "pick": Box(
                     np.array([-1]*self.num_picker),
                     np.array([ 1]*self.num_picker)
@@ -124,8 +119,9 @@ class RopeKnotEnv(RopeNewEnv):
                 ),
             })
         key_points_dim = 30#len(self.observation_space.low) # will be assigned in super function without topology
-        obs_dim = key_points_dim + 4*self.maximum_crossings*2*2 # num_rows*num_crossing*referencesToCrossing, and then again for the goal configuration.
+        obs_dim = key_points_dim #+ 4*self.maximum_crossings*2*2 # num_rows*num_crossing*referencesToCrossing, and then again for the goal configuration.
         self.observation_space = Box(np.array([-1]*obs_dim),np.array([1]*obs_dim)) #slightly wrong for now.
+        self.reward_penalty = 0
         
 
         
@@ -146,6 +142,9 @@ class RopeKnotEnv(RopeNewEnv):
         self.goal_configuration = np.zeros((4,self.maximum_crossings*2))
         num_crossings = self.goal_crossings#random.randint(1,self.maximum_crossings)
         self.goal_configuration[:,:num_crossings*2] = generate_random_topology(num_crossings)
+
+        for _ in range(50):
+            pyflex.step()
 
         return self._get_obs()
 
@@ -174,29 +173,33 @@ class RopeKnotEnv(RopeNewEnv):
         return generated_configs, generated_states
 
     def compute_reward(self, action=None, obs=None, **kwargs):
+        success_reward = 1 - self.reward_penalty
+        self.reward_penalty *= 0.99
         if self._is_done():
-            return 1
+            return success_reward
         else:
             return 0
 
-    def _get_topological_representation(self):
+    def get_topological_representation(self):
         particle_pos = np.array(pyflex.get_positions()).reshape([-1, 4])[:, :3]
         keypoint_pos = particle_pos[self.key_point_indices, :3]
         # return get_topological_representation(keypoint_pos)
         topo = get_topological_representation(keypoint_pos)
         topo_padded = np.zeros((4,self.maximum_crossings*2))
         topo_padded[:,:min(topo.shape[1],self.maximum_crossings*2)] = topo[:,:min(topo.shape[1],self.maximum_crossings*2)]
-        return topo_padded
+        return topo_padded.astype(int)
         
      
     def _is_done(self):
-        return compare_topology(self.goal_configuration,self._get_topological_representation())
+        return compare_topology(self.goal_configuration,self.get_topological_representation())
 
     def _step(self, action):
         action = np.tanh(action)
         action = self.action_space.split(action)
         # action should be [traj_func_index, pick(xy),place(xy),pick2,place2 .....] depending on number of pickers, and sub-policy outputs
-        traj_index = action['traj'].value
+
+        traj_index = action['traj'].value if 'traj' in action else 0
+
         action["pick"].clip()
         # if action["pick"].type == Box:
         #     action["pick"].rescale(self.workspace[0,[0,2]],self.workspace[1,[0,2]])
@@ -242,14 +245,18 @@ class RopeKnotEnv(RopeNewEnv):
             raise NotImplementedError
         return
 
+    def apply_negative_reward(self):
+        self.reward_penalty = 0.5
+
     def _get_obs(self):
 
         particle_pos = np.array(pyflex.get_positions()).reshape([-1, 4])[:, :3]
         keypoint_pos = particle_pos[self.key_point_indices, :3]
         for i in range(1,keypoint_pos.shape[0]):
             keypoint_pos[i,:] -= keypoint_pos[i-1,:]
-        topo = self._get_topological_representation()
-        obs = np.concatenate([topo.flatten(),self.goal_configuration.flatten(),keypoint_pos.flatten()])
+        topo = self.get_topological_representation()
+        # obs = np.concatenate([topo.flatten(),self.goal_configuration.flatten(),keypoint_pos.flatten()])
+        obs = keypoint_pos.flatten()
         return obs
         
         # if self.observation_mode == 'cam_rgb':
@@ -257,7 +264,7 @@ class RopeKnotEnv(RopeNewEnv):
 
 
         # if self.observation_mode == 'topology':
-        #     return self._get_topological_representation()
+        #     return self.get_topological_representation()
         # elif self.observation_mode == 'topo_and_key_point':
         #     raise NotImplementedError
 
@@ -280,9 +287,9 @@ class RopeKnotEnv(RopeNewEnv):
         # return pos
 
 
-    def _get_keypoints(self):
+    def get_keypoints(self):
         particle_pos = np.array(pyflex.get_positions()).reshape([-1, 4])[:, :3]
-        return particle_pos[self.key_point_indices, :3]
+        return particle_pos#[self.key_point_indices, :3]
 
 
     def _get_info(self):

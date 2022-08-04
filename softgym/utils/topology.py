@@ -1,6 +1,11 @@
-from turtle import pos
 import numpy as np
 import random
+
+INTERSECT_NUM = 0
+CORRESPONDING = 1
+OVER_UNDER = 2
+SIGN = 3
+
 
 def get_topological_representation(positions):
     intersections = []
@@ -30,7 +35,54 @@ def get_topological_representation(positions):
             is_over*2 -1, # -1 or 1
             sign[i]#/np.abs(sign[i]) # -1 or 1, disabled above
         ]
-    return topo
+    return topo.astype(int)
+
+
+def remove_R1(topo,ind):
+    if topo[CORRESPONDING,ind] == ind+1 and topo[CORRESPONDING,ind+1] == ind:
+        new_topo = np.delete(topo,[ind,ind+1],1)
+        new_topo[np.where(new_topo[INTERSECT_NUM:CORRESPONDING+1,:] > ind+1)] -= 2
+
+        return new_topo
+    return None
+
+def remove_R2(topo,ind):
+    other_crossings = topo[CORRESPONDING,[ind,ind+1]]
+    if abs(other_crossings[0]-other_crossings[1]) == 1 \
+        and topo[OVER_UNDER,ind] == topo[OVER_UNDER,ind+1] \
+        and not np.any(topo[OVER_UNDER,[ind,ind+1]] == topo[OVER_UNDER,other_crossings]):
+        
+        new_topo = np.delete(topo,other_crossings,1)
+        new_topo[np.where(new_topo[INTERSECT_NUM:CORRESPONDING+1,:] > max(other_crossings))] -= 2
+
+        new_topo = np.delete(new_topo,[ind,ind+1],1)
+        new_topo[np.where(new_topo[INTERSECT_NUM:CORRESPONDING+1,:] > ind+1)] -= 2
+
+        return new_topo
+    return None
+
+def remove_C(topo,ind):
+    if ind == -1:
+        ind = topo.shape[1]-1 # last column
+
+    if ind != 0 and ind != topo.shape[1]-1: #Cross moves only affect ends of the rope
+        return None
+
+    other_ind = topo[CORRESPONDING,ind]
+
+    a = max([ind,other_ind])
+    b = min([ind,other_ind])
+
+    new_topo = np.delete(topo,a,1)
+    new_topo[np.where(new_topo[INTERSECT_NUM:CORRESPONDING+1,:] > a)] -= 1
+
+    new_topo = np.delete(new_topo,b,1)
+    new_topo[np.where(new_topo[INTERSECT_NUM:CORRESPONDING+1,:] > b)] -= 1
+
+    return new_topo
+
+
+
 
 
 # def is_knot(topo):
@@ -90,7 +142,7 @@ def generate_random_topology(num_crossings):
 
 
 def flip_topology(topo):
-    topo[2,:] *= -1
+    topo[OVER_UNDER,:] *= -1
     return topo
 
 def reverse_topology(topo):
@@ -99,8 +151,8 @@ def reverse_topology(topo):
 
     reversed_topo = topo[:,::-1]   
     # rebase
-    reversed_topo[0,:] = np.arange(num_crossings)
-    reversed_topo[1,:] = num_crossings + 1 - reversed_topo[1,:]
+    reversed_topo[INTERSECT_NUM,:] = np.arange(num_crossings)
+    reversed_topo[CORRESPONDING,:] = num_crossings - reversed_topo[1,:] # would need to add 1 if not using zero-based topo
 
 
     return reversed_topo

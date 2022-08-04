@@ -4,7 +4,7 @@ from softgym.envs.rope_knot import RopeKnotEnv
 from softgym.utils.normalized_env import normalize
 from softgym.utils.trajectories import box_trajectory, curved_trajectory, curved_trajectory
 
-from stable_baselines3 import A2C
+from stable_baselines3 import A2C, SAC, PPO
 from stable_baselines3.common.vec_env.subproc_vec_env import SubprocVecEnv
 from stable_baselines3.common.monitor import Monitor
 from stable_baselines3.common.logger import configure
@@ -12,7 +12,7 @@ from stable_baselines3.common.evaluation import evaluate_policy
 def main(env_args,other_args):
     envs = SubprocVecEnv([lambda: normalize(Monitor(RopeKnotEnv(**env_args)))]*other_args.num_workers,'spawn')
 
-    model = A2C.load(other_args.model_path)
+    model = PPO.load(other_args.model_path)
     # model.set_logger(configure(f'{other_args.model_path}_eval_log',["stdout", "csv"]))
 
     evaluate_policy(

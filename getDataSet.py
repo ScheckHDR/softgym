@@ -2,7 +2,7 @@ import argparse
 from copy import deepcopy
 from softgym.envs.rope_knot import RopeKnotEnv
 from softgym.utils.normalized_env import normalize
-from softgym.utils.topology import get_topological_representation
+from softgym.utils.topology import *
 from softgym.utils.trajectories import box_trajectory, curved_trajectory, curved_trajectory
 
 from stable_baselines3 import A2C
@@ -14,13 +14,58 @@ import csv
 import numpy as np
 
 
+
 def which_reidemeister(prev,new):
+    # print(prev)
+    # print(new)
+    # print('-'*50)
     if np.all(prev==new):
         return 0
-    
-    if new.shape[1] - 2 == prev.shape[1]:
-        #possible R1
-        pass
+
+
+    # remove padding
+    prev = prev[:,:np.where(~prev.any(axis=0))[0][0]]
+    new = new[:,:np.where(~new.any(axis=0))[0][0]]
+
+
+    try:
+        if prev.shape[1] > new.shape[1]:
+            bigger,smaller = prev,new
+            modifier = -1 # Crossings were removed.
+        else:
+            bigger,smaller = new,prev
+            modifier = 1
+        
+        for ind in range(bigger.shape[1]-1):
+            removed = remove_R1(deepcopy(bigger),ind)
+            if removed is not None and np.all(removed == smaller):
+                return 1 * modifier
+
+        for ind in range(bigger.shape[1]-3):
+            removed = remove_R2(deepcopy(bigger),ind)
+            if removed is not None and np.all(removed == smaller):
+                return 2 * modifier
+
+        '''
+        Could do a test for R3 theoretically.
+        '''
+
+        for ind in [0,bigger.shape[1]-1]:
+            removed = remove_C(deepcopy(bigger),ind)
+            if removed is not None and np.all(removed == smaller):
+                return 4 * modifier
+    except Exception as e:
+        # if it gets here, then it is likely an error caused by
+        # clipping the representation
+        print(e)
+        # print(new)
+        # print(prev)
+        # print('-'*50)
+        pass 
+
+    return 5 # Potentially more complicated than what the Reidemeister and Cross moves allow, or buggy code.
+
+
 
 def main(env_args,other_args):
     
@@ -33,18 +78,20 @@ def main(env_args,other_args):
     # envs = SubprocVecEnv(start_funcs,'spawn')
 
     envs = SubprocVecEnv([lambda: normalize(Monitor(RopeKnotEnv(**env_args)))]*other_args.num_workers,'spawn')
-
-    prev_topologies = envs._get_topological_representation()
+    envs.reset()
+    prev_topologies = envs.env_method('get_topological_representation')
     with open('test.csv','w') as csvfile:
         csv_writer = csv.writer(csvfile,delimiter=',')
-        for i in range(int(1000/other_args.num_workers)):
-            actions = envs.action_space.sample()
-            envs.step(actions,record_continuous_video=True,img_size=720)
-            ropes = envs._get_keypoints()
-            new_topologies = envs._get_topological_representation()
+
+        for i in range(int(other_args.num_samples/other_args.num_workers)):
+            actions = [a_s.sample() for a_s in envs.get_attr('action_space')]
+            _, _, dones, _ = envs.step(actions)
+            ropes = envs.env_method('get_keypoints')
+            new_topologies = envs.env_method('get_topological_representation')
 
             for i in range(len(ropes)):
                 move = which_reidemeister(prev_topologies[i],new_topologies[i])
+                # print(move)
                 csv_writer.writerow([ropes[i],actions[i],prev_topologies[i],move])
 
             prev_topologies = deepcopy(new_topologies)
@@ -60,6 +107,7 @@ def main(env_args,other_args):
 
 def get_args():
     parser = argparse.ArgumentParser()
+    parser.add_argument('num_samples',type=int,help='How many samples should be in the dataset.')
     
     parser.add_argument('-headless', action='store_true', help='Whether to run the environment with headless rendering')
     
@@ -103,7 +151,7 @@ if __name__ == '__main__':
         'deterministic': False,
         'trajectory_funcs': [
             box_trajectory,
-            curved_trajectory,
+            # curved_trajectory,
         ],
         'maximum_crossings':args.maximum_crossings,
         'goal_crossings': args.goal_crossings,

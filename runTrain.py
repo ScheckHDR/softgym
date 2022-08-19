@@ -138,8 +138,9 @@ def main(default_config):
         'learning_rate' : wandb.config.learning_rate,
         'ent_coef' : wandb.config.ent_coef, 
     }
+
     if algorithm is not SAC:
-        training_kwargs['n_steps'] = wandb.config.n_steps,
+        training_kwargs['n_steps'] = wandb.config.n_steps
 
     try:
         envs = SubprocVecEnv([lambda: normalize(Monitor(RopeKnotEnv(**env_kwargs)))]*wandb.config.num_workers,'spawn')
@@ -160,23 +161,25 @@ def main(default_config):
 
 
     # model.set_logger(configure(f'{other_args.save_name}_log',["stdout", "csv"]))
-    print(model)
-    model.learn(
-        total_timesteps= wandb.config.total_timesteps,
-        log_interval = 1,
-        callback=CallbackList([
-            WandbCallback(
-                gradient_save_freq=100,
-                model_save_path=f'{wandb.config.save_name}/models/{run.id}',
-                verbose=2,
-            ),
-            CustomCallback(verbose=2),
-        ])
-    )
 
-    
-    envs.close()
-    run.finish()
+    try:
+        model.learn(
+            total_timesteps= wandb.config.total_timesteps // (wandb.config.num_workers if wandb.config.algorithm == 'SAC' else 1),
+            log_interval = 1,
+            callback=CallbackList([
+                WandbCallback(
+                    gradient_save_freq=100,
+                    model_save_path=f'{wandb.config.save_name}/models/{run.id}',
+                    verbose=2,
+                ),
+                CustomCallback(verbose=2),
+            ])
+        )
+    except:
+        pass
+    finally:
+        envs.close()
+        run.finish()
 
  
 
@@ -200,7 +203,7 @@ def get_args():
     parser.add_argument('--maximum_crossings',type=int,default=2,help='The maximum number of crossings for topological representations. Any representation exceeding this will be clipped down.')
     parser.add_argument('--goal_crossings',type=int,default=1,help='The number of crossings used for the goal configuration.')
     parser.add_argument('--total_steps',type=int,default=5000)
-    parser.add_argument('--num_sweeps',type=int,default=0,help='The number of runs to do in a sweep. If set to zero, will default to doing a single run outside of a sweep setting.')
+    parser.add_argument('--num_sweeps',type=int,default=1,help='The number of runs to do in a sweep. If set to one, will default to doing a single run outside of a sweep setting. If set to 0, will keep sweeping indefinitely.')
 
     args = parser.parse_args()    
     args.render_mode = args.render_mode.lower()
@@ -209,43 +212,14 @@ def get_args():
     assert args.horizon > 0, f'Horizon length must be a positive integer. You entered {args.horizon}.'
     assert args.pickers > 0, f'Number of pickers must be a positive integer. You entered {args.pickers}.'
     assert args.render_mode in ('cloth','particle','both'), f'Render_mode must be from the set {{cloth, particle, both}}. You entered {args.render_mode}.'
-    assert args.num_sweeps >= 0, f'num_sweeps must be a non-negative whole number. You entered {args.num_sweeps}'
+    assert args.num_sweeps >= 0, f'num_sweeps must be a positive whole number. You entered {args.num_sweeps}'
 
     return args
 
 if __name__ == '__main__':
     args = get_args()
 
-    sweep_params = {
-        "name": "test",
-        "method": "bayes",
-        "metric":{
-            "name": "mean_reward",
-            "goal": "maximize",
-        },
-        "parameters":{
-            "learning_rate":{
-                "min": 1e-4,
-                "max": 1e-1,
-            },
-            "ent_coef":{
-                "min" : 1e-3,
-                "max" : 5e-2,
-            },
-            "gamma":{
-                "values" : [0.9,0.95,0.99]
-            },
-            "n_steps" : {
-                "values" : [5,10,15]
-            },
-        },
-        "early_terminate":{
-            "type" : "hyperband",
-            "max_iter" : int(args.total_steps/args.horizon/args.num_workers),
-        },
-    }   
-
-
+    
     default_config = {
         "policy_type":      "MlpPolicy",
         "total_timesteps":  5000,
@@ -274,18 +248,54 @@ if __name__ == '__main__':
         'trajectory_funcs'  : [box_trajectory],
 
         # Training hyperparameters
-        'algorithm'         : 'PPO',
+        'algorithm'         : 'A2C',
         'learning_rate'     : 1e-3,
         'ent_coef'          : 1e-2,
         'gamma'             : 0.9,
         'n_steps'           : 5,
     }
 
+    sweep_params = {
+        "name": "Sweep_single_cross",
+        "method": "bayes",
+        "metric":{
+            "name": "mean_reward",
+            "goal": "maximize",
+        },
+        "parameters":{
+            "learning_rate":{
+                "min": 1e-4,
+                "max": 1e-1,
+            },
+            "ent_coef":{
+                "min" : 1e-3,
+                "max" : 5e-2,
+            },
+            "gamma":{
+                "values" : [0.9,0.95,0.99]
+            },
+            "n_steps" : {
+                "values" : [5,10,15]
+            },
+            "algorithm":{
+                "values" : ['PPO','DQN','A2C','SAC']
+            }
+        },
+        "early_terminate":{
+            "type"      : "hyperband",
+            "min_iter"  : 10,
+            "eta"       : 2
+        },
+    }  
+
     
-    sweep_id = wandb.sweep(sweep_params)
-    if args.num_sweeps > 0:
-        wandb.agent(sweep_id,function= lambda :main(default_config),count=args.num_sweeps)
-    else:
+    if args.num_sweeps == 1:
         main(default_config)
+    else:
+        sweep_id = wandb.sweep(sweep_params)
+        if args.num_sweeps == 0:
+            wandb.agent(sweep_id,function= lambda :main(default_config))
+        else:
+            wandb.agent(sweep_id,function= lambda :main(default_config),count=args.num_sweeps)
 
 

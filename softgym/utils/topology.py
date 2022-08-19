@@ -8,7 +8,7 @@ SIGN = 3
 
 
 def get_topological_representation(positions):
-    intersections = []
+    intersections = [[0,0]]
     for i in range(positions.shape[0]):
         for j in range (i+2,positions.shape[0]-2):
             if intersect(positions[i],positions[i+1],positions[j],positions[j+1]):
@@ -152,7 +152,7 @@ def reverse_topology(topo):
     reversed_topo = topo[:,::-1]   
     # rebase
     reversed_topo[INTERSECT_NUM,:] = np.arange(num_crossings)
-    reversed_topo[CORRESPONDING,:] = num_crossings - reversed_topo[1,:] # would need to add 1 if not using zero-based topo
+    reversed_topo[CORRESPONDING,:] = num_crossings - reversed_topo[CORRESPONDING,:] - 1# would need to subtract 1 if not using zero-based topo
 
 
     return reversed_topo
@@ -165,7 +165,35 @@ def ccw(A,B,C):
 def intersect(A,B,C,D):
     return ccw(A,C,D) != ccw(B,C,D) and ccw(A,B,C) != ccw(A,B,D)
 
+def reduce_representation(rep_large,indices):
+        
+    rep_reduced = np.zeros((5,len(indices)))
+    # rep_reduced[:2,:] = rep_large[:2,indices]
 
+
+
+    # test last segment first, incase of double crossing.
+    for i in range(1,len(indices)):
+        ind = np.where(rep_large[2,indices[-(i+1)]:indices[-(i)]] != 0)[0]
+        if len(ind) > 1:
+            indices[-(i+1)] += ind[-1]
+
+
+    rep_reduced[:,0] = rep_large[:,0]
+    e_ind = 0
+    for i in range(1,len(indices)):
+        s_ind = e_ind
+        e_ind = indices[i]
+
+        ind = np.where(rep_large[2,s_ind:e_ind] != 0)[0]
+
+        if len(ind) > 0:
+            rep_reduced[:,i] = rep_large[:,s_ind+ind[0]]
+            e_ind = s_ind+ind[0] + 1
+        else:
+            rep_reduced[:,i] = rep_large[:,e_ind-1]
+            
+    return rep_reduced
 
 
 

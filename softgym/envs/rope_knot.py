@@ -122,10 +122,9 @@ class RopeKnotEnv(RopeNewEnv):
                     np.array([ 1, 1]*self.num_picker)
                 ),
             })
-        key_points_dim = 30#len(self.observation_space.low) # will be assigned in super function without topology
+        key_points_dim = 50#30#len(self.observation_space.low) # will be assigned in super function without topology
         obs_dim = key_points_dim #+ 4*self.maximum_crossings*2*2 # num_rows*num_crossing*referencesToCrossing, and then again for the goal configuration.
         self.observation_space = Box(np.array([-1]*obs_dim),np.array([1]*obs_dim)) #slightly wrong for now.
-        self.reward_penalty = 0
         
 
         
@@ -177,25 +176,93 @@ class RopeKnotEnv(RopeNewEnv):
         return generated_configs, generated_states
 
     def compute_reward(self, action=None, obs=None, **kwargs):
-        success_reward = 1 - self.reward_penalty
-        self.reward_penalty *= 0.99
+
         if self._is_done():
-            return success_reward
-        else:
             return 0
+        else:
+            return -1
 
     def get_topological_representation(self):
         particle_pos = np.array(pyflex.get_positions()).reshape([-1, 4])[:, :3]
-        keypoint_pos = particle_pos[self.key_point_indices, :3]
-        # return get_topological_representation(keypoint_pos)
-        topo = get_topological_representation(keypoint_pos)
-        topo_padded = np.zeros((4,self.maximum_crossings*2))
-        topo_padded[:,:min(topo.shape[1],self.maximum_crossings*2)] = topo[:,:min(topo.shape[1],self.maximum_crossings*2)]
-        return topo_padded.astype(int)
+        
+        topo_test = np.zeros((3,particle_pos.shape[0]))
+        intersections = []
+        for i in range(1,particle_pos.shape[0]):
+            for j in range (i+2,particle_pos.shape[0]):
+
+                if intersect(particle_pos[i],particle_pos[i-1],particle_pos[j],particle_pos[j-1]):
+                    for k in range(j,particle_pos.shape[0]):
+                        # avoid possibility for two crossings to be associated with same geom
+                        # pushes secondary crossing onto later geom
+                        if topo_test[0,k] == 0:
+                            topo_test[1,i:] += 1
+                            topo_test[1,k:] += 1
+                            intersections.append([i,k])
+                            intersections.append([k,i])
+                            if particle_pos[i,1] > particle_pos[k,1]:
+                                topo_test[0,i] =  1
+                                topo_test[0,k] = -1
+                            else:
+                                topo_test[0,i] = -1
+                                topo_test[0,k] = 1
+                            break
+
+        
+        if len(intersections) > 1:
+            intersections.sort(key = lambda a:a[0])
+            cross1 = np.argmax(topo_test[1,:] != 0)
+            for i in range(cross1,topo_test.shape[1]):
+                topo_test[2, i] = intersections.index(
+                    intersections[int(topo_test[1,i])-1][::-1])
+            
+        full_rep = np.concatenate((np.transpose(particle_pos[:,[0,2]]),topo_test),axis=0)
+
+        rep = reduce_representation(full_rep,np.linspace(0,full_rep.shape[1],10,True,dtype=int))
+
+        # if abs(np.sum(rep[2,:]) > 0.01):
+        #     print(full_rep)
+        #     print(rep)
+        #     raise Exception
+
+        return rep
+
+
         
      
     def _is_done(self):
-        return compare_topology(self.goal_configuration,self.get_topological_representation())
+        current = self.get_topological_representation()
+        trimmed_crossings = np.trim_zeros(current[4,:],'f')
+        unique_ind = np.unique(trimmed_crossings,return_index=True)[1]
+        current_order = trimmed_crossings[sorted(unique_ind)]
+        current_over_under = current[2,np.where(current[2,:] != 0)[0]].astype(int)
+        
+        nz = np.nonzero(self.goal_configuration)  # Indices of all nonzero elements
+        goal = self.goal_configuration[nz[0].min():nz[0].max()+1,
+                        nz[1].min():nz[1].max()+1]
+        flipped_goal = flip_topology(deepcopy(goal))
+        reversed_goal = reverse_topology(deepcopy(goal))
+        flip_reversed_goal = flip_topology(reverse_topology(deepcopy(goal)))
+
+        try:
+            C = np.vstack((current_order,current_over_under))
+        except Exception as e:
+            print(current)
+            print(current_order)
+            print(current_over_under)
+
+
+        G = goal[1:3,:]
+        RG = reversed_goal[1:3,:]
+        FG = flipped_goal[1:3,:]
+        RFG = flip_reversed_goal[1:3,:]
+        if (np.all(C == G)) \
+            or (np.all(C == FG)) \
+            or (np.all(C == RG)) \
+            or (np.all(C == RFG)):
+            return True
+        else:
+            return False
+        
 
     def _step(self, action):
         action = np.tanh(action)
@@ -248,47 +315,24 @@ class RopeKnotEnv(RopeNewEnv):
             raise NotImplementedError
         return
 
-    def apply_negative_reward(self):
-        self.reward_penalty = 0.5
+    
+                
+            
+
+
+
 
     def _get_obs(self):
+        topo = self.get_topological_representation().astype(float)
+        num_segments = topo[3,-1]
+        if num_segments > 2:
+            topo[3,:] /= num_segments
+            topo[3,:] /= num_segments-1
+        return topo.flatten()
 
-        particle_pos = np.array(pyflex.get_positions()).reshape([-1, 4])[:, :3]
-        keypoint_pos = particle_pos[self.key_point_indices, :3]
-        for i in range(1,keypoint_pos.shape[0]):
-            keypoint_pos[i,:] -= keypoint_pos[i-1,:]
-        topo = self.get_topological_representation()
-        # obs = np.concatenate([topo.flatten(),self.goal_configuration.flatten(),keypoint_pos.flatten()])
-        obs = keypoint_pos.flatten()
-        return obs
+    def T_get_obs(self):
+        return self._get_obs()
         
-        # if self.observation_mode == 'cam_rgb':
-        #     return self.get_image(self.camera_height, self.camera_width)
-
-
-        # if self.observation_mode == 'topology':
-        #     return self.get_topological_representation()
-        # elif self.observation_mode == 'topo_and_key_point':
-        #     raise NotImplementedError
-
-        # if self.observation_mode == 'point_cloud':
-        #     particle_pos = np.array(pyflex.get_positions()).reshape([-1, 4])[:, :3].flatten()
-        #     pos = np.zeros(shape=self.particle_obs_dim, dtype=np.float)
-        #     pos[:len(particle_pos)] = particle_pos
-        #     pos[len(particle_pos):] = self.current_config["goal_character_pos"][:, :3].flatten()
-        # elif self.observation_mode == 'key_point':
-        #     particle_pos = np.array(pyflex.get_positions()).reshape([-1, 4])[:, :3]
-        #     keypoint_pos = particle_pos[self.key_point_indices, :3]
-        #     goal_keypoint_pos = self.current_config["goal_character_pos"][self.key_point_indices, :3]
-        #     pos = np.concatenate([keypoint_pos, goal_keypoint_pos], axis=0).flatten()
-
-
-        # if self.action_mode in ['sphere', 'picker']:
-        #     shapes = pyflex.get_shape_states()
-        #     shapes = np.reshape(shapes, [-1, 14])
-        #     pos = np.concatenate([pos.flatten(), shapes[:, :3].flatten()])
-        # return pos
-
 
     def get_keypoints(self):
         particle_pos = np.array(pyflex.get_positions()).reshape([-1, 4])[:, :3]

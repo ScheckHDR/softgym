@@ -20,7 +20,7 @@ def main(env_args,other_args):
     envs = SubprocVecEnv([lambda: normalize(Monitor(RopeKnotEnv(**env_args)))]*other_args.num_workers,'spawn')
     envs.reset()
     prev_obs = envs.env_method('T_get_obs')
-    with open('test.csv','w') as csvfile:
+    with open(other_args.save_name,'w') as csvfile:
         csv_writer = csv.writer(csvfile,delimiter=',')
 
         for i in range(other_args.num_samples//other_args.num_workers):

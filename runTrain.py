@@ -162,24 +162,25 @@ def main(default_config):
 
     # model.set_logger(configure(f'{other_args.save_name}_log',["stdout", "csv"]))
 
-    try:
-        model.learn(
-            total_timesteps= wandb.config.total_timesteps // (wandb.config.num_workers if wandb.config.algorithm == 'SAC' else 1),
-            log_interval = 1,
-            callback=CallbackList([
-                WandbCallback(
-                    gradient_save_freq=100,
-                    model_save_path=f'{wandb.config.save_name}/models/{run.id}',
-                    verbose=2,
-                ),
-                CustomCallback(verbose=2),
-            ])
-        )
-    except:
-        pass
-    finally:
-        envs.close()
-        run.finish()
+    # try:
+    model.learn(
+        total_timesteps= wandb.config.total_timesteps // (wandb.config.num_workers if wandb.config.algorithm == 'SAC' else 1),
+        log_interval = 1,
+        callback=CallbackList([
+            # WandbCallback(
+            #     gradient_save_freq=100,
+            #     model_save_path=f'{wandb.config.save_name}/models/{run.id}',
+            #     verbose=2,
+            # ),
+            CustomCallback(verbose=2),
+        ])
+    )
+    # except:
+    #     pass
+    # finally:
+    del model
+    envs.close()
+    run.finish()
 
  
 
@@ -204,6 +205,7 @@ def get_args():
     parser.add_argument('--goal_crossings',type=int,default=1,help='The number of crossings used for the goal configuration.')
     parser.add_argument('--total_steps',type=int,default=5000)
     parser.add_argument('--num_sweeps',type=int,default=1,help='The number of runs to do in a sweep. If set to one, will default to doing a single run outside of a sweep setting. If set to 0, will keep sweeping indefinitely.')
+    parser.add_argument('--sweep_id',type=str,default=None)
 
     args = parser.parse_args()    
     args.render_mode = args.render_mode.lower()
@@ -231,7 +233,7 @@ if __name__ == '__main__':
         'headless'          : args.headless,
         'horizon'           : args.horizon,
         'render_mode'       : args.render_mode,
-        'render'            : True,
+        'render'            : not args.headless,#True,
         'action_repeat'     : 1,
         'use_cached_states' : False,
         'save_cached_states': False,
@@ -292,7 +294,7 @@ if __name__ == '__main__':
     if args.num_sweeps == 1:
         main(default_config)
     else:
-        sweep_id = wandb.sweep(sweep_params)
+        sweep_id = args.sweep_id or wandb.sweep(sweep_params)
         if args.num_sweeps == 0:
             wandb.agent(sweep_id,function= lambda :main(default_config))
         else:

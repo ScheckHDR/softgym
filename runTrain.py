@@ -1,6 +1,7 @@
 import argparse
 from copy import deepcopy
 from typing import Dict
+import numpy as np
 
 import gym
 from softgym.envs.rope_knot import RopeKnotEnv
@@ -8,15 +9,25 @@ from softgym.utils.normalized_env import normalize
 from softgym.utils.trajectories import box_trajectory, curved_trajectory, curved_trajectory
 
 from stable_baselines3 import A2C, SAC, PPO, DQN
+from stable_baselines3.sac.policies import MultiInputPolicy
 from stable_baselines3.common.vec_env.subproc_vec_env import SubprocVecEnv
 from stable_baselines3.common.monitor import Monitor
 from stable_baselines3.common.logger import configure
 
 from stable_baselines3.common.callbacks import BaseCallback, CallbackList
 
+from gym.spaces import Box
+
 
 import wandb
 from wandb.integration.sb3 import WandbCallback
+
+
+def const__schedule(init_val:float):
+    def func(*args,**kwargs):
+        return init_val
+    return func
+
 
 class CustomCallback(BaseCallback):
     """
@@ -95,7 +106,7 @@ class CustomCallback(BaseCallback):
 def main(default_config):
 
     run = wandb.init(
-        project='test',
+        project=args.project_name,
         config=default_config,
         sync_tensorboard=True,
         monitor_gym=False,
@@ -142,18 +153,42 @@ def main(default_config):
     if algorithm is not SAC:
         training_kwargs['n_steps'] = wandb.config.n_steps
 
+    learning_schedule = const__schedule(wandb.config.learning_rate)
+    policy = wandb.config.policy_type
     try:
         envs = SubprocVecEnv([lambda: normalize(Monitor(RopeKnotEnv(**env_kwargs)))]*wandb.config.num_workers,'spawn')
+        # if wandb.config.policy_type == 'MultiInputPolicy':
+            
+        #     policy = MultiInputPolicy(
+        #         envs.observation_space,
+        #         envs.action_space,
+        #         learning_schedule,
+        #         normalize_images=False
+        #     )
+        # else:
+        #     policy = wandb.config.policy_type
         model = algorithm(
-            wandb.config.policy_type,
+            policy,
             envs,
             verbose = 1,
             **training_kwargs  
         )
     except ValueError:
+        envs.close()
+        print('single')
         envs = normalize(RopeKnotEnv(**env_kwargs))
+        if wandb.config.policy_type == 'MultiInputPolicy':
+            
+            policy = MultiInputPolicy(
+                envs.observation_space,
+                envs.action_space,
+                learning_schedule,
+                normalize_images=False
+            )
+        else:
+            policy = wandb.config.policy_type
         model = algorithm(
-            wandb.config.policy_type,
+            policy,
             envs,
             verbose = 1,
             **training_kwargs  
@@ -163,6 +198,7 @@ def main(default_config):
     # model.set_logger(configure(f'{other_args.save_name}_log',["stdout", "csv"]))
 
     # try:
+    print(model)
     model.learn(
         total_timesteps= wandb.config.total_timesteps // (wandb.config.num_workers if wandb.config.algorithm == 'SAC' else 1),
         log_interval = 1,
@@ -206,6 +242,8 @@ def get_args():
     parser.add_argument('--total_steps',type=int,default=5000)
     parser.add_argument('--num_sweeps',type=int,default=1,help='The number of runs to do in a sweep. If set to one, will default to doing a single run outside of a sweep setting. If set to 0, will keep sweeping indefinitely.')
     parser.add_argument('--sweep_id',type=str,default=None)
+    parser.add_argument('--project_name',type=str,default="Rope_RL")
+    parser.add_argument('--sweep_name',type=str,default='test')
 
     args = parser.parse_args()    
     args.render_mode = args.render_mode.lower()
@@ -221,11 +259,13 @@ def get_args():
 if __name__ == '__main__':
     args = get_args()
 
+
+
     
     default_config = {
-        "policy_type":      "MlpPolicy",
-        "total_timesteps":  5000,
-        "env_name":         "ropeKnotting",
+        "policy_type"       : "MultiInputPolicy",
+        "total_timesteps"   : 5000,
+        "env_name"          : "ropeKnotting",
 
         # Simulator parameters
         'num_workers'       : args.num_workers,
@@ -250,7 +290,7 @@ if __name__ == '__main__':
         'trajectory_funcs'  : [box_trajectory],
 
         # Training hyperparameters
-        'algorithm'         : 'A2C',
+        'algorithm'         : 'SAC',
         'learning_rate'     : 1e-3,
         'ent_coef'          : 1e-2,
         'gamma'             : 0.9,
@@ -280,7 +320,10 @@ if __name__ == '__main__':
                 "values" : [5,10,15]
             },
             "algorithm":{
-                "values" : ['PPO','DQN','A2C','SAC']
+                "values" : ['SAC']#['PPO','DQN','A2C','SAC']
+            },
+            'goal_crossings':{
+                'values' : [1]
             }
         },
         "early_terminate":{
@@ -290,11 +333,15 @@ if __name__ == '__main__':
         },
     }  
 
+    # wandb.init(
+    #     project=args.project_name,
+    # )
+
     
     if args.num_sweeps == 1:
         main(default_config)
     else:
-        sweep_id = args.sweep_id or wandb.sweep(sweep_params)
+        sweep_id = args.sweep_id or wandb.sweep(sweep_params,project=args.project_name)
         if args.num_sweeps == 0:
             wandb.agent(sweep_id,function= lambda :main(default_config))
         else:

@@ -12,6 +12,7 @@ from stable_baselines3.common.logger import configure
 
 import csv
 import numpy as np
+np.set_printoptions(threshold=np.inf)
 
 
 
@@ -19,14 +20,15 @@ def main(env_args,other_args):
     
     envs = SubprocVecEnv([lambda: normalize(Monitor(RopeKnotEnv(**env_args)))]*other_args.num_workers,'spawn')
     envs.reset()
-    prev_obs = envs.env_method('T_get_obs')
+    prev_obs = envs.env_method('get_topological_representation')
     with open(other_args.save_name,'w') as csvfile:
         csv_writer = csv.writer(csvfile,delimiter=',')
+        csv_writer.writerow(['before','action','after'])
 
         for i in range(other_args.num_samples//other_args.num_workers):
             actions = [a_s.sample() for a_s in envs.get_attr('action_space')]
             _, _, dones, _ = envs.step(actions)
-            obs = envs.env_method('T_get_obs')
+            obs = envs.env_method('get_topological_representation')
 
             for i in range(len(obs)):
                 csv_writer.writerow([prev_obs[i],actions[i],obs[i]])
@@ -50,7 +52,7 @@ def get_args():
 
     # Environment options
     parser.add_argument('--num_variations', type=int, default=1, help='Number of environment variations to be generated')
-    parser.add_argument('--horizon',type=int,default=5,help='The length of each episode.')
+    parser.add_argument('--horizon',type=int,default=10,help='The length of each episode.')
     parser.add_argument('--pickers',type=int,default=2)
     parser.add_argument('--render_mode',type=str,default='cloth',help='The render mode of the object. Must be from the set \{cloth, particle, both\}.')
     parser.add_argument('--maximum_crossings',type=int,default=5,help='The maximum number of crossings for topological representations. Any representation exceeding this will be clipped down.')

@@ -1,4 +1,5 @@
 import argparse
+from matplotlib.cbook import flatten
 import numpy as np
 import pandas as pd
 
@@ -6,12 +7,47 @@ import torch
 import torch.nn.functional as F
 import pytorch_lightning as pl
 
-from torch import nn
+from torch import Tensor, nn
 from torch.utils.data import Dataset, DataLoader, random_split
 from pytorch_lightning.callbacks.early_stopping import EarlyStopping
 from pytorch_lightning.callbacks.model_checkpoint import ModelCheckpoint
 
+from softgym.envs.rope_knot import convert_topo_rep
 
+
+class ggg(pl.LightningModule):
+    def __init__(self):
+        super().__init__()
+
+        head1 = nn.Sequential(
+            nn.Identity()
+        )
+        head2 = nn.Sequential(
+            nn.Flatten(),
+            nn.Linear(40*2,50),
+            nn.ReLU(),
+            nn.Linear(50,50),
+            nn.ReLU()
+        )
+        head3 = nn.Sequential(
+            nn.Conv2d(1,10,3),
+            nn.MaxPool2d(2,2),
+            nn.Conv2d(10,10,3),
+            nn.MaxPool2d(2,2),
+            nn.ReLU(),
+            nn.Flatten()
+        )
+
+        with torch.no_grad():
+            combined_size = 3 + 50 + np.prod(head3(Tensor(np.zeros((1,41,41),dtype=float)).unsqueeze(0)).shape)
+
+        body = nn.Sequential(
+            nn.Linear(combined_size,500),
+            nn.ReLU(),
+            nn.Linear(500,100),
+            nn.ReLU(),
+            nn.Linear(100,3)
+        )
 
 
 class StatePredictor(pl.LightningModule):
@@ -66,6 +102,8 @@ class ActionPredictor(pl.LightningModule):
         
         self.model = nn.Sequential(*layers)
 
+
+
     def forward(self,x):
         return self.model(x)
 
@@ -86,6 +124,9 @@ class ActionPredictor(pl.LightningModule):
     def configure_optimizers(self):
         return torch.optim.Adam(self.parameters(),lr = self.lr)
 
+
+
+workspace = np.array([[-0.35,0.35],[-0.35,0.35]])
 class RopeDataset(Dataset):
     def __init__(self,mode:str,csv_path:str,transform=None):
         mode = mode.upper()
@@ -101,14 +142,18 @@ class RopeDataset(Dataset):
 
     
     def __getitem__(self,idx):
+        idx = 0
         before, action, after = self.data.iloc[idx,:]
-        
 
-        before = np.fromstring(before.strip('[]'),np.float32,50,' ')
-        action = np.fromstring(action.strip('[]'),np.float32,3,' ')
-        after  = np.fromstring(after.strip('[]'),np.float32,50,' ')
+        print(f'{"-"*50}\n{before}\n {"-"*50}')
+        before = np.fromstring(before,np.float32,sep=' ')
+        action = np.fromstring(action.strip('[]'),np.float32,sep=' ')
+        after  = np.fromstring(after.strip('[]'),np.float32,sep=' ')
+        print(f'{"-"*50}\n{before}\n {"-"*50}')
 
 
+        before = convert_topo_rep(before,workspace)
+        after = convert_topo_rep(after,workspace)
 
 
         if self.mode == 'FORWARD':

@@ -1,3 +1,4 @@
+from cmath import pi
 import numpy as np
 import pickle
 import os.path as osp
@@ -10,72 +11,62 @@ from softgym.action_space.action_space import PickerTraj
 from gym.spaces import Box, Discrete, Dict
 import softgym.utils.trajectories
 
-from scipy.special import softmax
+import time
 
-class _Space:
-    def __init__(self,key,type,indices,low,high):
-        self.key = key
-        self.type = type
-        self.indices = indices
-        self.low = low
-        self.high = high
-        self.value = None
+def convert_topo_rep(topo,workspace,obs_spaces):
+    N = topo.shape[1]
 
-    def clip(self):
-        self.value = np.clip(
-            self.value,
-            self.low,
-            self.high
-        )
-    def rescale(self,out_min,out_max):
-        current_range = self.high-self.low
-        out_range = out_max-out_min
+    # r = np.math.atan2(topo[1,0],topo[0,0])
+    theta = np.math.atan2(topo[1,1] - topo[1,0],topo[0,1] - topo[0,0])
 
-        self.value = ((self.value - self.low) / current_range) * out_range + out_min
+    t_mat = np.array(
+        [[np.math.cos(theta),np.math.sin(theta),topo[0,0]],
+        [-np.math.sin(theta),np.math.cos(theta),topo[1,0]],
+        [0,0,1]]
+    )
+    h_points = np.concatenate((topo[:2,:],np.ones((1,N))),axis=0)
 
+    t_points = np.linalg.inv(t_mat) @ h_points
+    t_delta = t_points[:,1:] - np.expand_dims(t_points[:,0],1)
+    shape = t_delta[:2,:]
+    tail = np.array([topo[0,0],topo[1,0],theta],ndmin=2)
 
-class MixedActionSpace(Box):
-    # Because stable baselines3 doesn't accept dict spaces.
-    def __init__(self,spaces:dict):
-        lows, highs = [],[]
-        self.spaces = []
-        start_index = 0
-        for key,value in spaces.items():
-            if isinstance(value,Box):
-                lows.extend(value.low)
-                highs.extend(value.high)
-                self.spaces.append(_Space(key,Box,[start_index,len(lows)],value.low,value.high))
-            elif isinstance(value,Discrete):
-                lows.extend([-1]*value.n)
-                highs.extend([1]*value.n)
-                self.spaces.append(_Space(key,Discrete,[start_index,len(lows)],0,value.n-1))
-            else:
-                raise NotImplementedError
-            start_index = len(lows)
+    incidence_matrix = np.zeros((N,N))
+    for i in range(N):
+        if topo[2,i] == 0:
+            continue
 
-        super().__init__(np.array(lows),np.array(highs))
-        
-    
-    def split(self, action):
-        out_dict = {}
-        for space in self.spaces:
-            if space.type == Box:
-                space.value = action[space.indices[0]:space.indices[1]]
-            elif space.type == Discrete:
-                space.value = np.argmax(softmax(action[space.indices[0]:space.indices[1]]))
-            else:
-                raise NotImplementedError
-            out_dict[space.key] = space
+        if len(np.where(abs(incidence_matrix[i,:]) > 0)[0]) != 0:
+            #already found the crossing previously.
+            continue
 
-        return out_dict
+        seg = topo[3,i]
+        corr_seg = np.where(topo[4,:] == seg)[0]
+        j = np.where(topo[2,corr_seg] != 0)[0]
+
+        incidence_matrix[i,corr_seg[j]] = topo[2,i]
+        incidence_matrix[corr_seg[j],i] = topo[2,corr_seg[j]]
 
 
+
+    # Normalising
+    tail_normalising = np.vstack([workspace,[-pi,pi]])
+    # tail = (tail + tail_normalising[:,0]) / (tail_normalising[:,1] - tail_normalising[:,0]) * 2 - 1
+
+    # Normalise Shape?
+
+    return {
+        "tail"  : tail.reshape(obs_spaces['tail'].shape),
+        "shape" : shape.reshape(obs_spaces['shape'].shape),
+        "cross" : incidence_matrix.reshape(obs_spaces['cross'].shape)
+    }
 
 
 class RopeKnotEnv(RopeNewEnv):
     def __init__(self, cached_states_path='rope_knot_init_states.pkl', **kwargs):
         kwargs['action_mode'] = 'picker_trajectory'
         super().__init__(cached_states_path=cached_states_path,**kwargs)
+        
         if self.observation_mode in ['topology','topo_and_key_point']:
             # figure out what to do with the observation spaces for gym.
             raise NotImplementedError
@@ -93,38 +84,30 @@ class RopeKnotEnv(RopeNewEnv):
         self.num_traj = len(self.trajectory_gen_funcs)
         self.maximum_crossings = kwargs['maximum_crossings']
         self.goal_crossings = kwargs['goal_crossings']
-        # self.goal_configuration = np.array([
-        #     [0 ,1],
-        #     [1 ,0],
-        #     [-1,1],
-        #     [1 ,1]
-        # ])
 
 
-        # self._reset()
+
         if self.action_mode == 'picker_trajectory':
             self.action_tool = PickerTraj(self.num_picker, picker_radius=self.picker_radius, picker_threshold=0.005, 
                 particle_radius=0.025, picker_low=(-0.35, 0., -0.35), picker_high=(0.35, 0.3, 0.35))
             self.get_cached_configs_and_states(cached_states_path, self.num_variations)
-            # num_points = len(self.key_point_indices)
-            # self.action_space = Box(
-            #     np.concatenate([[self.num_traj],[-0.4,-0.4]*2*self.num_picker]),
-            #     np.concatenate([[self.num_traj],[ 0.4, 0.4]*2*self.num_picker])
-            # )
-            self.action_space = MixedActionSpace({
-                # "traj"  : Discrete(self.num_traj),
-                "pick": Box(
-                    np.array([-1]*self.num_picker),
-                    np.array([ 1]*self.num_picker)
-                ),
-                "place": Box(
-                    np.array([-1,-1]*self.num_picker),
-                    np.array([ 1, 1]*self.num_picker)
-                ),
-            })
-        key_points_dim = 50#30#len(self.observation_space.low) # will be assigned in super function without topology
-        obs_dim = key_points_dim #+ 4*self.maximum_crossings*2*2 # num_rows*num_crossing*referencesToCrossing, and then again for the goal configuration.
-        self.observation_space = Box(np.array([-1]*obs_dim),np.array([1]*obs_dim)) #slightly wrong for now.
+
+            self.action_space = Box(
+                np.array([0,-0.35,-0.35]*self.num_picker),
+                np.array([ 1, 0.35, 0.35]*self.num_picker)
+            )
+
+        points = 41
+        # obs_dim = points*points + 2*points + 1
+        self.observation_space = Dict({
+            "tail"  : Box(low=np.array([-1]*3,ndmin=2), high=np.array([1]*3,ndmin=2)),
+            "shape" : Box(low=np.array([[-1]*(points-1)]*2,ndmin=2),high=np.array([[-1]*(points-1)]*2,ndmin=2)),
+            "cross" : Box(low=np.array([[-1]*points]*points,ndmin=3),high=np.array([[-1]*points]*points,ndmin=3))
+        })
+        # self.observation_space = Box(np.array([-1]*obs_dim),np.array([1]*obs_dim))
+
+        self.workspace =np.array([[-0.35,0.35],[-0.35,0.35]])
+        self.goal_configuration = deepcopy(generate_random_topology(self.goal_crossings))
         
 
         
@@ -142,9 +125,9 @@ class RopeKnotEnv(RopeNewEnv):
             cx, cy = self._get_center_point(curr_pos)
             self.action_tool.reset([cx, 0.1, cy])
 
-        self.goal_configuration = np.zeros((4,self.maximum_crossings*2))
-        num_crossings = self.goal_crossings#random.randint(1,self.maximum_crossings)
-        self.goal_configuration[:,:num_crossings*2] = generate_random_topology(num_crossings)
+        # self.goal_configuration = np.zeros((4,self.maximum_crossings*2))
+        # num_crossings = self.goal_crossings#random.randint(1,self.maximum_crossings)
+        # self.goal_configuration[:,:num_crossings*2] = generate_random_topology(num_crossings)
 
         for _ in range(50):
             pyflex.step()
@@ -217,18 +200,9 @@ class RopeKnotEnv(RopeNewEnv):
             
         full_rep = np.concatenate((np.transpose(particle_pos[:,[0,2]]),topo_test),axis=0)
 
-        rep = reduce_representation(full_rep,np.linspace(0,full_rep.shape[1],10,True,dtype=int))
+        return full_rep
 
-        # if abs(np.sum(rep[2,:]) > 0.01):
-        #     print(full_rep)
-        #     print(rep)
-        #     raise Exception
-
-        return rep
-
-
-        
-     
+   
     def _is_done(self):
         current = self.get_topological_representation()
         trimmed_crossings = np.trim_zeros(current[4,:],'f')
@@ -239,99 +213,108 @@ class RopeKnotEnv(RopeNewEnv):
         nz = np.nonzero(self.goal_configuration)  # Indices of all nonzero elements
         goal = self.goal_configuration[nz[0].min():nz[0].max()+1,
                         nz[1].min():nz[1].max()+1]
-        flipped_goal = flip_topology(deepcopy(goal))
-        reversed_goal = reverse_topology(deepcopy(goal))
-        flip_reversed_goal = flip_topology(reverse_topology(deepcopy(goal)))
+        # flipped_goal = flip_topology(deepcopy(goal))
+        # reversed_goal = reverse_topology(deepcopy(goal))
+        # flip_reversed_goal = flip_topology(reverse_topology(deepcopy(goal)))
 
-        try:
-            C = np.vstack((current_order,current_over_under))
-        except Exception as e:
-            print(current)
-            print(current_order)
-            print(current_over_under)
+        C = np.vstack((current_order,current_over_under))
+
 
 
         G = goal[1:3,:]
-        RG = reversed_goal[1:3,:]
-        FG = flipped_goal[1:3,:]
-        RFG = flip_reversed_goal[1:3,:]
-        if (np.all(C == G)) \
-            or (np.all(C == FG)) \
-            or (np.all(C == RG)) \
-            or (np.all(C == RFG)):
+        # RG = reversed_goal[1:3,:]
+        # FG = flipped_goal[1:3,:]
+        # RFG = flip_reversed_goal[1:3,:]
+        if (np.all(C == G)):# \
+            # or (np.all(C == FG)) \
+            # or (np.all(C == RG)) \
+            # or (np.all(C == RFG)):
             return True
         else:
             return False
         
 
     def _step(self, action):
-        action = np.tanh(action)
-        action = self.action_space.split(action)
-        # action should be [traj_func_index, pick(xy),place(xy),pick2,place2 .....] depending on number of pickers, and sub-policy outputs
+        rope = self._get_obs()
+        rope_frame = rope['tail']
 
-        traj_index = action['traj'].value if 'traj' in action else 0
+        theta = rope_frame[0,2]
 
-        action["pick"].clip()
-        # if action["pick"].type == Box:
-        #     action["pick"].rescale(self.workspace[0,[0,2]],self.workspace[1,[0,2]])
+        r_mat = np.array(
+            [
+                [np.math.cos(theta),0,np.math.sin(theta),rope_frame[0,0]],
+                [0,1,0,0],
+                [-np.math.sin(theta),0, np.math.cos(theta),rope_frame[0,1]],
+                [0,0,0,1]
+            ]
+        )
 
-        action["place"].clip()
-        action["place"].rescale(self.workspace[0,[0,2]],self.workspace[1,[0,2]])       
-        # if action["pick"].type == Box:
-        #     action["pick"].value = np.clip(
-        #         action["pick"].value,
-        #         np.tile(self.workspace[0,[0,2]],self.num_picker),
-        #         np.tile(self.workspace[1,[0,2]],self.num_picker)
-        #     )
+        # heights = np.transpose(pyflex.get_positions().reshape((-1, 4))[:,1])
+        rel_positions_h = np.concatenate(
+            (
+                np.insert(rope['shape'][0,:],0,0).reshape((1,-1)),
+                np.zeros((1,rope['cross'].shape[-1])),
+                np.insert(rope['shape'][1,:],0,0).reshape((1,-1)),
+                np.ones((1,rope['cross'].shape[-1]))
+            ),
+            axis=0
+        ).reshape((4,-1))
 
-        # action["place"].value = np.clip(
-        #     action["place"].value,
-        #     np.tile(self.workspace[0,[0,2]],self.num_picker),
-        #     np.tile(self.workspace[1,[0,2]],self.num_picker)
-        # )
-        # action_params = np.clip(action_params,self.action_space['params'].low,self.action_space['params'].high)
-        if self.action_mode == 'picker_trajectory':
-            trajectories = []
-            for picker in range(self.num_picker):
-                if action["pick"].type == Discrete:
-                    pick = pyflex.get_positions().reshape((-1, 4))[self.key_point_indices][action["pick"].value, :3]
-                elif action["pick"].type == Box:
-                    points = pick = pyflex.get_positions().reshape((-1, 4))[self.key_point_indices]
-                    pick_idx = round(((action["pick"].value[picker]*0.5) + 0.5) * len(points)) -1
-                    pick = points[pick_idx,:3]
-                    # pick = action["pick"].value[picker*2:picker*2 +2],                        
-                else:
-                    raise NotImplementedError
-                place = action["place"].value[picker*2:picker*2 +2]
+        pick_idx = round(action[0] * (rel_positions_h.shape[1]-1))
+        pick_coords_rel_h = rel_positions_h[:,pick_idx]
 
-                trajectories.append(self.trajectory_gen_funcs[traj_index](pick,place,num_points=150))
-            traj_action = np.concatenate(trajectories)
-            traj_action = traj_action.reshape((self.num_picker,int(traj_action.size/3/self.num_picker),3))
-            self.action_tool.step(traj_action,renderer=self.render if not self.headless else lambda *args, **kwargs : None)
-        # elif self.action_mode.startswith('picker'):
-        #     self.action_tool.step(action)
-        #     pyflex.step()
-        else:
-            raise NotImplementedError
+        place_coords_rel_h = pick_coords_rel_h + np.array([action[1],0,action[2],0])
+
+        pick_coords = (r_mat @ pick_coords_rel_h)[0:3]
+        place_coords = (r_mat @ place_coords_rel_h)[0:3]
+
+        pos = pyflex.get_positions().reshape((-1, 4))
+        # print(f'frame: {rope_frame}')
+        # print(f'pick: {pick_coords}, should be {pos[pick_idx,:3]}')
+        # print(f'place_h :{place_coords_rel_h}')
+        # print(f'place:{place_coords}')
+        # print('-'*50)
+
+        traj_index = 0
+        traj = [self.trajectory_gen_funcs[traj_index](pick_coords,place_coords,num_points=150)]
+        traj_action = np.concatenate(traj)
+        traj_action = traj_action.reshape((self.num_picker,int(traj_action.size/3/self.num_picker),3))
+        self.action_tool.step(traj_action,renderer=self.render if not self.headless else lambda *args, **kwargs : None)
+
+
+        # if self.action_mode == 'picker_trajectory':
+        #     trajectories = []
+        #     for picker in range(self.num_picker):
+        #         pick_idx = round(action[0] * (heights.shape[0]-1))
+        #         pick_coords_rel = pos[:,pick_idx]
+        #         place_coords_rel = pick_coords_rel + np.array([[action[1]],[action[2]],[0]])
+
+        #         pick_coords = r_mat @ np.array([[pick_coords_rel[0]],[pick_coords_rel[1]],[1]])
+        #         pick_coords[2] = pick_coords_rel[1]       
+
+        #         place_coords = r_mat @ place_coords_rel
+        #         place_coords[2] = place_coords_rel[1]
+
+        #         print(f'frame: {rope_frame}')
+        #         print(f'pick: {pick_coords}, should be {pos[pick_idx,:3]}')
+        #         print(f'place:{place_coords}')
+        #         print('-'*50)
+
+        #         trajectories.append(self.trajectory_gen_funcs[traj_index](pick_coords,place_coords,num_points=150))
+        #     traj_action = np.concatenate(trajectories)
+        #     traj_action = traj_action.reshape((self.num_picker,int(traj_action.size/3/self.num_picker),3))
+        #     self.action_tool.step(traj_action,renderer=self.render if not self.headless else lambda *args, **kwargs : None)
+
+        # else:
+        #     raise NotImplementedError
         return
 
     
-                
-            
-
-
-
 
     def _get_obs(self):
         topo = self.get_topological_representation().astype(float)
-        num_segments = topo[3,-1]
-        if num_segments > 2:
-            topo[3,:] /= num_segments
-            topo[3,:] /= num_segments-1
-        return topo.flatten()
 
-    def T_get_obs(self):
-        return self._get_obs()
+        return convert_topo_rep(topo,self.workspace,self.observation_space)
         
 
     def get_keypoints(self):

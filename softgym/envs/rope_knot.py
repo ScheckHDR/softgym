@@ -11,15 +11,17 @@ from softgym.action_space.action_space import PickerTraj
 from gym.spaces import Box, Discrete, Dict
 import softgym.utils.trajectories
 
-def convert_topo_rep(topo,workspace):
+import time
+
+def convert_topo_rep(topo,workspace,obs_spaces):
     N = topo.shape[1]
 
     # r = np.math.atan2(topo[1,0],topo[0,0])
     theta = np.math.atan2(topo[1,1] - topo[1,0],topo[0,1] - topo[0,0])
 
     t_mat = np.array(
-        [[np.math.cos(theta),-np.math.sin(theta),topo[0,0]],
-        [np.math.sin(theta),np.math.cos(theta),topo[1,0]],
+        [[np.math.cos(theta),np.math.sin(theta),topo[0,0]],
+        [-np.math.sin(theta),np.math.cos(theta),topo[1,0]],
         [0,0,1]]
     )
     h_points = np.concatenate((topo[:2,:],np.ones((1,N))),axis=0)
@@ -28,14 +30,6 @@ def convert_topo_rep(topo,workspace):
     t_delta = t_points[:,1:] - np.expand_dims(t_points[:,0],1)
     shape = t_delta[:2,:]
     tail = np.array([topo[0,0],topo[1,0],theta],ndmin=2)
-
-    # poses = np.concatenate(
-    #     (
-    #         np.array([topo[0,0],topo[1,0],theta],ndmin=2).transpose(),
-    #         t_delta
-    #     ),
-    #     axis=1
-    # )
 
     incidence_matrix = np.zeros((N,N))
     for i in range(N):
@@ -57,7 +51,7 @@ def convert_topo_rep(topo,workspace):
 
     # Normalising
     tail_normalising = np.vstack([workspace,[-pi,pi]])
-    tail = (tail + tail_normalising[:,0]) / (tail_normalising[:,1] - tail_normalising[:,0]) * 2 - 1
+    # tail = (tail + tail_normalising[:,0]) / (tail_normalising[:,1] - tail_normalising[:,0]) * 2 - 1
 
     # Normalise Shape?
 
@@ -72,6 +66,7 @@ class RopeKnotEnv(RopeNewEnv):
     def __init__(self, cached_states_path='rope_knot_init_states.pkl', **kwargs):
         kwargs['action_mode'] = 'picker_trajectory'
         super().__init__(cached_states_path=cached_states_path,**kwargs)
+        
         if self.observation_mode in ['topology','topo_and_key_point']:
             # figure out what to do with the observation spaces for gym.
             raise NotImplementedError
@@ -105,13 +100,14 @@ class RopeKnotEnv(RopeNewEnv):
         points = 41
         # obs_dim = points*points + 2*points + 1
         self.observation_space = Dict({
-            "tail"  : Box(low=np.array([-1]*3), high=np.array([1]*3)),
-            "shape" : Box(low=np.array([[-1]*(points-1)]*2),high=np.array([[-1]*(points-1)]*2)),
-            "cross" : Box(low=np.array([[-1]*points]*points),high=np.array([[-1]*points]*points))
+            "tail"  : Box(low=np.array([-1]*3,ndmin=2), high=np.array([1]*3,ndmin=2)),
+            "shape" : Box(low=np.array([[-1]*(points-1)]*2,ndmin=2),high=np.array([[-1]*(points-1)]*2,ndmin=2)),
+            "cross" : Box(low=np.array([[-1]*points]*points,ndmin=3),high=np.array([[-1]*points]*points,ndmin=3))
         })
         # self.observation_space = Box(np.array([-1]*obs_dim),np.array([1]*obs_dim))
 
         self.workspace =np.array([[-0.35,0.35],[-0.35,0.35]])
+        self.goal_configuration = deepcopy(generate_random_topology(self.goal_crossings))
         
 
         
@@ -129,9 +125,9 @@ class RopeKnotEnv(RopeNewEnv):
             cx, cy = self._get_center_point(curr_pos)
             self.action_tool.reset([cx, 0.1, cy])
 
-        self.goal_configuration = np.zeros((4,self.maximum_crossings*2))
-        num_crossings = self.goal_crossings#random.randint(1,self.maximum_crossings)
-        self.goal_configuration[:,:num_crossings*2] = generate_random_topology(num_crossings)
+        # self.goal_configuration = np.zeros((4,self.maximum_crossings*2))
+        # num_crossings = self.goal_crossings#random.randint(1,self.maximum_crossings)
+        # self.goal_configuration[:,:num_crossings*2] = generate_random_topology(num_crossings)
 
         for _ in range(50):
             pyflex.step()
@@ -204,13 +200,6 @@ class RopeKnotEnv(RopeNewEnv):
             
         full_rep = np.concatenate((np.transpose(particle_pos[:,[0,2]]),topo_test),axis=0)
 
-        # rep = reduce_representation(full_rep,np.linspace(0,full_rep.shape[1],10,True,dtype=int))
-
-        # if abs(np.sum(rep[2,:]) > 0.01):
-        #     print(full_rep)
-        #     print(rep)
-        #     raise Exception
-
         return full_rep
 
    
@@ -244,24 +233,78 @@ class RopeKnotEnv(RopeNewEnv):
         
 
     def _step(self, action):
+        rope = self._get_obs()
+        rope_frame = rope['tail']
+
+        theta = rope_frame[0,2]
+
+        r_mat = np.array(
+            [
+                [np.math.cos(theta),0,np.math.sin(theta),rope_frame[0,0]],
+                [0,1,0,0],
+                [-np.math.sin(theta),0, np.math.cos(theta),rope_frame[0,1]],
+                [0,0,0,1]
+            ]
+        )
+
+        # heights = np.transpose(pyflex.get_positions().reshape((-1, 4))[:,1])
+        rel_positions_h = np.concatenate(
+            (
+                np.insert(rope['shape'][0,:],0,0).reshape((1,-1)),
+                np.zeros((1,rope['cross'].shape[-1])),
+                np.insert(rope['shape'][1,:],0,0).reshape((1,-1)),
+                np.ones((1,rope['cross'].shape[-1]))
+            ),
+            axis=0
+        ).reshape((4,-1))
+
+        pick_idx = round(action[0] * (rel_positions_h.shape[1]-1))
+        pick_coords_rel_h = rel_positions_h[:,pick_idx]
+
+        place_coords_rel_h = pick_coords_rel_h + np.array([action[1],0,action[2],0])
+
+        pick_coords = (r_mat @ pick_coords_rel_h)[0:3]
+        place_coords = (r_mat @ place_coords_rel_h)[0:3]
+
+        pos = pyflex.get_positions().reshape((-1, 4))
+        # print(f'frame: {rope_frame}')
+        # print(f'pick: {pick_coords}, should be {pos[pick_idx,:3]}')
+        # print(f'place_h :{place_coords_rel_h}')
+        # print(f'place:{place_coords}')
+        # print('-'*50)
+
         traj_index = 0
+        traj = [self.trajectory_gen_funcs[traj_index](pick_coords,place_coords,num_points=150)]
+        traj_action = np.concatenate(traj)
+        traj_action = traj_action.reshape((self.num_picker,int(traj_action.size/3/self.num_picker),3))
+        self.action_tool.step(traj_action,renderer=self.render if not self.headless else lambda *args, **kwargs : None)
 
-        if self.action_mode == 'picker_trajectory':
-            trajectories = []
-            for picker in range(self.num_picker):
-                place_coords = action[1:]
-                pos = pyflex.get_positions().reshape((-1, 4))
-                pick_idx = round(action[0] * (pos.shape[0]-1))
-                pick_coords = pos[pick_idx,:3]
-                
 
-                trajectories.append(self.trajectory_gen_funcs[traj_index](pick_coords,place_coords,num_points=150))
-            traj_action = np.concatenate(trajectories)
-            traj_action = traj_action.reshape((self.num_picker,int(traj_action.size/3/self.num_picker),3))
-            self.action_tool.step(traj_action,renderer=self.render if not self.headless else lambda *args, **kwargs : None)
+        # if self.action_mode == 'picker_trajectory':
+        #     trajectories = []
+        #     for picker in range(self.num_picker):
+        #         pick_idx = round(action[0] * (heights.shape[0]-1))
+        #         pick_coords_rel = pos[:,pick_idx]
+        #         place_coords_rel = pick_coords_rel + np.array([[action[1]],[action[2]],[0]])
 
-        else:
-            raise NotImplementedError
+        #         pick_coords = r_mat @ np.array([[pick_coords_rel[0]],[pick_coords_rel[1]],[1]])
+        #         pick_coords[2] = pick_coords_rel[1]       
+
+        #         place_coords = r_mat @ place_coords_rel
+        #         place_coords[2] = place_coords_rel[1]
+
+        #         print(f'frame: {rope_frame}')
+        #         print(f'pick: {pick_coords}, should be {pos[pick_idx,:3]}')
+        #         print(f'place:{place_coords}')
+        #         print('-'*50)
+
+        #         trajectories.append(self.trajectory_gen_funcs[traj_index](pick_coords,place_coords,num_points=150))
+        #     traj_action = np.concatenate(trajectories)
+        #     traj_action = traj_action.reshape((self.num_picker,int(traj_action.size/3/self.num_picker),3))
+        #     self.action_tool.step(traj_action,renderer=self.render if not self.headless else lambda *args, **kwargs : None)
+
+        # else:
+        #     raise NotImplementedError
         return
 
     
@@ -269,7 +312,7 @@ class RopeKnotEnv(RopeNewEnv):
     def _get_obs(self):
         topo = self.get_topological_representation().astype(float)
 
-        return convert_topo_rep(topo,self.workspace)
+        return convert_topo_rep(topo,self.workspace,self.observation_space)
         
 
     def get_keypoints(self):

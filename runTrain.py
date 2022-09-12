@@ -2,6 +2,7 @@ import argparse
 from copy import deepcopy
 from typing import Dict
 import numpy as np
+import multiprocessing as mp
 
 import gym
 from softgym.envs.rope_knot import RopeKnotEnv
@@ -156,61 +157,39 @@ def main(default_config):
     learning_schedule = const__schedule(wandb.config.learning_rate)
     policy = wandb.config.policy_type
     try:
-        envs = SubprocVecEnv([lambda: normalize(Monitor(RopeKnotEnv(**env_kwargs)))]*wandb.config.num_workers,'spawn')
-        # if wandb.config.policy_type == 'MultiInputPolicy':
-            
-        #     policy = MultiInputPolicy(
-        #         envs.observation_space,
-        #         envs.action_space,
-        #         learning_schedule,
-        #         normalize_images=False
-        #     )
-        # else:
-        #     policy = wandb.config.policy_type
-        model = algorithm(
-            policy,
-            envs,
-            verbose = 1,
-            **training_kwargs  
-        )
-    except ValueError:
-        envs.close()
-        print('single')
-        envs = normalize(RopeKnotEnv(**env_kwargs))
-        if wandb.config.policy_type == 'MultiInputPolicy':
-            
-            policy = MultiInputPolicy(
-                envs.observation_space,
-                envs.action_space,
-                learning_schedule,
-                normalize_images=False
+        if algorithm is not SAC:
+            envs = SubprocVecEnv([lambda: normalize(Monitor(RopeKnotEnv(**env_kwargs)))]*wandb.config.num_workers,'spawn')
+            model = algorithm(
+                wandb.config.policy_type,
+                envs,
+                verbose = 1,
+                **training_kwargs  
             )
         else:
-            policy = wandb.config.policy_type
-        model = algorithm(
-            policy,
-            envs,
-            verbose = 1,
-            **training_kwargs  
+            envs = normalize(RopeKnotEnv(**env_kwargs))
+            model = algorithm(
+                wandb.config.policy_type,
+                envs,
+                verbose = 1,
+                **training_kwargs  
+            )
+
+        # try:
+        model.learn(
+            total_timesteps= wandb.config.total_timesteps // (wandb.config.num_workers if wandb.config.algorithm == 'SAC' else 1),
+            log_interval = 1,
+            callback=CallbackList([
+                # WandbCallback(
+                #     gradient_save_freq=100,
+                #     model_save_path=f'{wandb.config.save_name}/models/{run.id}',
+                #     verbose=2,
+                # ),
+                CustomCallback(verbose=2),
+            ])
         )
-
-
-    # model.set_logger(configure(f'{other_args.save_name}_log',["stdout", "csv"]))
-
-    # try:
-    print(model)
-    model.learn(
-        total_timesteps= wandb.config.total_timesteps // (wandb.config.num_workers if wandb.config.algorithm == 'SAC' else 1),
-        log_interval = 1,
-        callback=CallbackList([
-            # WandbCallback(
-            #     gradient_save_freq=100,
-            #     model_save_path=f'{wandb.config.save_name}/models/{run.id}',
-            #     verbose=2,
-            # ),
-            CustomCallback(verbose=2),
-        ])
-    )
+    except Exception as e:
+        print(e)
+        envs.close()
     # except:
     #     pass
     # finally:
@@ -231,6 +210,7 @@ def get_args():
     
     parser.add_argument('--save_name',type=str,default='./output/TEMP',help='The directory to place generated models.')
     parser.add_argument('--num_workers',type=int,default=1,help='How many workers to run in parallel generating data for the model being trained.')
+    parser.add_argument('--num_agents',type=int,default=1)
 
     # Environment options
     parser.add_argument('--num_variations', type=int, default=1, help='Number of environment variations to be generated')
@@ -253,6 +233,7 @@ def get_args():
     assert args.pickers > 0, f'Number of pickers must be a positive integer. You entered {args.pickers}.'
     assert args.render_mode in ('cloth','particle','both'), f'Render_mode must be from the set {{cloth, particle, both}}. You entered {args.render_mode}.'
     assert args.num_sweeps >= 0, f'num_sweeps must be a positive whole number. You entered {args.num_sweeps}'
+    assert args.num_agents > 0, f'num_agents must be a positive integer, not {args.num_agents}'
 
     return args
 
@@ -263,9 +244,9 @@ if __name__ == '__main__':
 
     
     default_config = {
-        "policy_type"       : "MultiInputPolicy",
-        "total_timesteps"   : 5000,
-        "env_name"          : "ropeKnotting",
+        "policy_type":      "CustPolicy",
+        "total_timesteps":  5000,
+        "env_name":         "ropeKnotting",
 
         # Simulator parameters
         'num_workers'       : args.num_workers,
@@ -275,8 +256,8 @@ if __name__ == '__main__':
         'render_mode'       : args.render_mode,
         'render'            : not args.headless,#True,
         'action_repeat'     : 1,
-        'use_cached_states' : False,
-        'save_cached_states': False,
+        'use_cached_states' : True,
+        'save_cached_states': True,
         'deterministic'     : False,
 
         # Environment parameters
@@ -343,8 +324,13 @@ if __name__ == '__main__':
     else:
         sweep_id = args.sweep_id or wandb.sweep(sweep_params,project=args.project_name)
         if args.num_sweeps == 0:
-            wandb.agent(sweep_id,function= lambda :main(default_config))
-        else:
-            wandb.agent(sweep_id,function= lambda :main(default_config),count=args.num_sweeps)
+            args.num_sweeps = None
+
+        processes = [mp.Process(target = lambda: wandb.agent(sweep_id,function= lambda :main(default_config),count=args.num_sweeps)) for _ in range(args.num_agents)]
+        for p in processes:
+            p.start()
+        for p in processes:
+            p.join()
+        # wandb.agent(sweep_id,function= lambda :main(default_config),count=args.num_sweeps)
 
 

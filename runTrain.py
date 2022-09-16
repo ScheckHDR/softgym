@@ -110,7 +110,7 @@ def main(default_config):
         project=args.project_name,
         config=default_config,
         sync_tensorboard=True,
-        monitor_gym=False,
+        monitor_gym=True,
         save_code=False
     )
     env_kwargs = {
@@ -179,11 +179,11 @@ def main(default_config):
             total_timesteps= wandb.config.total_timesteps // (wandb.config.num_workers if wandb.config.algorithm == 'SAC' else 1),
             log_interval = 1,
             callback=CallbackList([
-                # WandbCallback(
-                #     gradient_save_freq=100,
-                #     model_save_path=f'{wandb.config.save_name}/models/{run.id}',
-                #     verbose=2,
-                # ),
+                WandbCallback(
+                    model_save_freq=500,
+                    model_save_path=f'{wandb.config.save_name}/models/{run.id}',
+                    verbose=2,
+                ),
                 CustomCallback(verbose=2),
             ])
         )
@@ -326,7 +326,7 @@ if __name__ == '__main__':
         if args.num_sweeps == 0:
             args.num_sweeps = None
 
-        processes = [mp.Process(target = lambda: wandb.agent(sweep_id,function= lambda :main(default_config),count=args.num_sweeps)) for _ in range(args.num_agents)]
+        processes = [mp.Process(target = lambda: wandb.agent(sweep_id,project = args.project_name, function= lambda :main(default_config),count=args.num_sweeps)) for _ in range(args.num_agents)]
         for p in processes:
             p.start()
         for p in processes:

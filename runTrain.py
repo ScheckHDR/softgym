@@ -11,6 +11,7 @@ from softgym.utils.trajectories import box_trajectory, curved_trajectory, curved
 
 from stable_baselines3 import A2C, SAC, PPO, DQN
 from stable_baselines3.sac.policies import MultiInputPolicy
+from CustAlgs.policy import CustPolicy
 from stable_baselines3.common.vec_env.subproc_vec_env import SubprocVecEnv
 from stable_baselines3.common.monitor import Monitor
 from stable_baselines3.common.logger import configure
@@ -279,7 +280,7 @@ if __name__ == '__main__':
     }
 
     sweep_params = {
-        "name": "Sweep_single_cross",
+        "name": args.sweep_name,
         "method": "bayes",
         "metric":{
             "name": "mean_reward",
@@ -300,12 +301,6 @@ if __name__ == '__main__':
             "n_steps" : {
                 "values" : [5,10,15]
             },
-            "algorithm":{
-                "values" : ['SAC']#['PPO','DQN','A2C','SAC']
-            },
-            'goal_crossings':{
-                'values' : [1]
-            }
         },
         "early_terminate":{
             "type"      : "hyperband",

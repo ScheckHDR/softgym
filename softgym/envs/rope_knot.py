@@ -108,6 +108,7 @@ class RopeKnotEnv(RopeNewEnv):
 
         self.workspace =np.array([[-0.35,0.35],[-0.35,0.35]])
         self.goal_configuration = deepcopy(generate_random_topology(self.goal_crossings))
+        print(self.goal_configuration)
         
 
         

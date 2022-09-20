@@ -21,11 +21,15 @@ def get_quarter_circle(radius,stepsize=0.01,round_decimals=5):
     return 
 def get_transformation_matrix(pos,theta):
     return np.array([
-        [np.cos(theta),np.sin(theta),pos[0]],
-        [np.sin(theta),np.cos(theta),pos[1]],
+        [np.cos(theta), np.sin(theta),pos[0]],
+        [-np.sin(theta),np.cos(theta),pos[1]],
         [0,0,1]
     ])
-
+def R_mat(t):
+    return np.array([
+        [np.cos(t),np.sin(t)],
+        [-np.sin(t),np.cos(t)]
+    ])
 
 class RopeTopology:
     def __init__(self,topology):
@@ -37,6 +41,8 @@ class RopeTopology:
 
     def size(self):
         return self._topology.shape[1]
+    def list_segments(self):
+        return self._topology[0,:].tolist()
     def get_col(self,col):
         return self._topology[:,self.section_index(col)]
     def section_index(self,col):
@@ -74,8 +80,7 @@ class RopeTopology:
         
 
     def create_display(self):
-        self._display = DisplayRep()
-        self._display.process(self)
+        self._display = RopeDisplay(self)
         self._has_display = True
 
     def display_str(self):
@@ -84,6 +89,173 @@ class RopeTopology:
         else:
             raise Exception("Display not initialised")
 
+class RopeDisplay:
+    def __init__(self,topology:RopeTopology):
+        self.topology = topology
+
+        self.segments = []
+        self.crossings = [Crossing()] # start of the rope
+
+        for segment_num in topology.list_segments():
+
+            new_seg = Segment(topology.sign(segment_num))
+            self.crossings[-1].attach_segment(new_seg,incoming=False,is_start=len(self.segments) == 0)
+
+            if topology.corresponding(segment_num) > segment_num:
+                # crossing won't exist yet, so create a new one
+                new_crossing = Crossing(topology.get_col(segment_num)[:2].tolist())
+                new_crossing.attach_segment(new_seg,incoming=True,over=topology.is_upper(segment_num))
+                self.crossings.append(new_crossing)
+            else:
+                crossing = [c for c in self.crossings if c.is_crossing(segment_num)][0] # only one should match
+                crossing.attach_segment(new_seg,incoming=True,over=topology.is_upper(segment_num))
+            self.segments.append(new_seg)
+
+        # # occupied_points = []
+        # for seg in self.segments:
+        #     seg.find_path(self.segments)
+        
+
+        # add a "crossing" for the end
+        self.crossings.append(Crossing())
+        self.crossings[-1].attach_segment(new_seg,incoming=True,over=True) # can assume over for last segment, just incase of graphical issues.
+
+        pos=np.array([0,0])
+        direction = 0
+        for seg in self.segments:
+            pos,direction = seg.find_path(self.segments,pos,direction)
+
+
+
+
+
+
+
+            
+
+class Crossing:
+    def __init__(self,numbers=[-1,-1]):
+        self.numbers = numbers
+
+        self.over_in = None
+        self.under_in = None
+        self.over_out = None
+        self.under_out = None
+
+        self.pos = None
+
+    def attach_segment(self,segment,incoming:bool,over:bool=None,is_start:bool=False):
+        assert not (incoming == True and over is None), f'Cannot have an incoming segment without knowing if it is over or under.'
+        if incoming:
+            if over:
+                self.over_in = segment
+            else:
+                self.under_in = segment
+        else:       
+            if self.over_in is not None and self.under_in is not None:
+                raise Exception('Too many segments')
+            if self.over_in is not None or is_start:
+                self.over_out = segment
+            elif self.under_in is not None:
+                self.under_out = segment
+            else:
+                raise Exception('Out segment without an in segment')
+        segment.attach_crossing(self,not incoming)
+
+    def is_crossing(self,num):
+        return num in self.numbers
+
+class Segment:
+    def __init__(self,goes_left:bool):
+        self.left = goes_left
+        self.points = [[]]
+
+    def split(self,start_pos, end_pos,is_over:bool):
+        pass
+
+    def attach_crossing(self,crossing,is_start:bool):
+        if is_start:
+            self.start_crossing = crossing
+        else:
+            self.end_crossing = crossing
+
+    def has_point(self,point):
+        return any(np.all(point==p) for line in self.points for p in line)\
+            or (self.end_crossing.pos is not None and np.all(point == self.end_crossing.pos))\
+            or (self.start_crossing.pos is not None and np.all(point == self.start_crossing.pos))
+
+    def modify_path(self,hit_point,direction):
+        pass
+
+    def find_path(self,segments,pos=np.array([0,0]),direction = 0):
+        step = np.array([1,0])
+        R = R_mat(direction)
+        def can_turn() -> bool:
+            nonlocal self
+            turn()
+
+            test_pos = np.round(pos + (R @ step))
+            res = np.all(test_pos == self.end_crossing.pos) or not collides(test_pos)
+
+            self.left = not self.left
+            turn()
+            self.left = not self.left
+
+            return res
+
+        def turn():
+            nonlocal R,direction
+            if self.left:
+                direction += np.pi/2
+            else:
+                direction -= np.pi/2
+            R = R_mat(direction)
+
+        def collides(position) -> bool:
+            for seg in segments:
+                if seg != self and seg.has_point(position):
+                    return True
+            return False
+
+
+        if self.start_crossing.pos is None:
+            self.start_crossing.pos = pos
+        if self.end_crossing.pos is None:
+            test_pos = np.round(pos + (R @ step))
+            self.end_crossing.pos = test_pos
+            pos = test_pos
+            return pos,direction
+
+        while True:
+
+            test_pos = np.round(pos + (R @ step))
+            if np.all(test_pos == self.end_crossing.pos):
+                pos = test_pos
+                break
+            if collides(test_pos):
+                pass
+            else:
+                pos = test_pos
+                self.points[-1].append(pos)
+
+                if can_turn():
+                    turn()
+        
+        return pos,direction
+
+        
+
+        
+
+
+
+
+        
+            
+
+
+
+'''
 class DisplayRep:
     def __init__(self,bounds = None,parent = None,curved_left = True):
         
@@ -115,6 +287,8 @@ class DisplayRep:
         area_size = self.get_size()
         end_pos = pos + get_transformation_matrix([0,0],direction)@np.array([[area_size],[0],[1]])
         num_sub_points = self.bound_max - self.bound_min - 1
+        for i in range(1,num_sub_points+1):
+            positions[self.bound_min]
         
 
 
@@ -194,7 +368,7 @@ class DisplayRep:
             if self.contains_end:
                 rep += '\t'*(self.depth) + 'E\n'
 
-            return rep
+            return rep'''
 
                 
 

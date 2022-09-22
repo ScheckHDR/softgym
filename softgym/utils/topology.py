@@ -19,6 +19,12 @@ def get_quarter_circle(radius,stepsize=0.01,round_decimals=5):
     y = np.sqrt(radius**2 - x**2)
 
     return 
+
+def parametric_circle(t,xc,yc,R):
+    x = xc + R*np.cos(t)
+    y = yc + R*np.sin(t)
+    return np.transpose(np.vstack((x,y)))
+
 def get_transformation_matrix(pos,theta):
     return np.array([
         [np.cos(theta), np.sin(theta),pos[0]],
@@ -34,9 +40,11 @@ def R_mat(t):
 class RopeTopology:
     def __init__(self,topology):
         self._topology = topology
-
         self._has_display = False
         self._display = None
+
+
+
 
 
     def size(self):
@@ -69,15 +77,6 @@ class RopeTopology:
         if not self._has_display:
             self.create_display()
 
-    
-
-    
-
-
-
-
-
-        
 
     def create_display(self):
         self._display = RopeDisplay(self)
@@ -94,13 +93,15 @@ class RopeDisplay:
         self.topology = topology
 
         self.segments = []
-        self.crossings = [Crossing(position=np.array([-1,0]))] # start of the rope
+        self.crossings = [Crossing(position=np.array([-1,0],ndmin=2))] # start of the rope
 
         prev_crossing = self.crossings[-1]
 
+        prev_over = True
+
         for segment_num in topology.list_segments():
 
-            new_seg = Segment(segment_num,topology.sign(segment_num))
+            new_seg = Segment(segment_num,prev_over,topology.is_upper(segment_num),topology.sign(segment_num))
             prev_crossing.attach_segment(new_seg,incoming=False,is_start=len(self.segments) == 0)
 
             if topology.corresponding(segment_num) > segment_num:
@@ -115,47 +116,37 @@ class RopeDisplay:
                 crossing.attach_segment(new_seg,incoming=True,over=topology.is_upper(segment_num))
 
                 prev_crossing = crossing
-            self.segments.append(new_seg)
+            self.segments.append(new_seg) 
 
-        # # occupied_points = []
-        # for seg in self.segments:
-        #     seg.find_path(self.segments)
-        
+            prev_over = topology.is_upper(segment_num)
 
         # add a final segment
-        final_segment = Segment(segment_num + 1,True) # assume goes left. Shouldn't matter anyway
+        final_segment = Segment(segment_num + 1,prev_over,True,True) # assume goes left. Shouldn't matter anyway
+        self.segments.append(final_segment)
         self.crossings[-1].attach_segment(final_segment,incoming=False)
         self.crossings.append(Crossing())
         self.crossings[-1].attach_segment(final_segment,incoming=True,over=True) # can assume over for last segment, just incase of graphical issues.
 
-        while True:
-            pos= self.crossings[0].pos
-            direction = 0
-            try:
-                for i in range(len(self.segments)):
-                    pos,direction = self.segments[i].find_path(self.segments,pos,direction)
-                    plt.clf()
-                    # for j in range(i+1):
-                    #     self.segments[j].plot()
-                    # plt.axis('square')
-                    # plt.show()
-                break
-            except DisplayError:
-                for seg in self.segments:
-                    seg.points = [[]]
+        pos= self.crossings[0].pos
+        direction = 0
+        for i in range(len(self.segments)):
+            pos,direction = self.segments[i].find_path(self.segments,self.crossings,pos,direction)
+            plt.clf()
+            for j in range(i+1):
+                self.segments[j].plot()
+            plt.axis('square')
+            plt.show()
 
-        for j in range(i+1):
-            self.segments[j].plot()
+        self.plot(3)
+
+    def plot(self,pick_segment=-1,cross_segment=-1,place_left=True):
+        
+
+        for seg in self.segments:
+            seg.plot('r-' if seg.segment_num == pick_segment else 'b-')
         plt.axis('square')
         plt.show()
-
-
-
-
-
-
-
-            
+           
 
 class Crossing:
     def __init__(self,numbers=[-1,-1],position = None):
@@ -188,41 +179,29 @@ class Crossing:
     def is_crossing(self,num):
         return num in self.numbers
 
-    def move(self,direction):
-        self.pos = np.round(self.pos + (R_mat(direction) @ np.array([1,0])))
-
-
-        if self.over_in is not None and np.all(self.pos == self.over_in.start_crossing.pos):
-            self.over_in.start_crossing.move(direction)
-
-        elif self.under_in is not None and np.all(self.pos == self.under_in.start_crossing.pos):
-            self.under_in.start_crossing.move(direction)
-
-        elif self.over_out is not None and np.all(self.pos == self.over_out.end_crossing.pos):
-            self.over_out.end_crossing.move(direction)
-            
-        elif self.under_out is not None and np.all(self.pos == self.under_out.end_crossing.pos):
-            self.under_out.end_crossing.move(direction)
+    def move(self,ref_point, direction):
+        if self.pos is None:
+            return
+        dir = np.round(direction/np.pi*2) % 4
+        if (dir == 0 and self.pos[0,0] >= ref_point[0,0]) \
+            or (dir == 1 and self.pos[0,1] >= ref_point[0,1]) \
+            or (dir == 2 and self.pos[0,0] <= ref_point[0,0]) \
+            or (dir == 3 and self.pos[0,1] <= ref_point[0,1]):
+            self.pos = np.round(self.pos + (R_mat(direction) @ np.array([1,0])))
 
         
-
-
-
-
-        
-         
 
 class Segment:
-    def __init__(self,segment_num,goes_left:bool):
+    def __init__(self,segment_num,starts_over:bool,ends_over:bool,goes_left:bool):
         self.left = goes_left > 0
-        self.points = [[]]
+        self.lines = [np.empty(2)]
         self.segment_num = segment_num
 
         self.start_crossing = None
         self.end_crossing = None
 
-    def split(self,start_pos, end_pos,is_over:bool):
-        pass
+        self.starts_over = starts_over
+        self.ends_over = ends_over
 
     def attach_crossing(self,crossing,is_start:bool):
         if is_start:
@@ -235,98 +214,136 @@ class Segment:
         R = R_mat(direction)
 
         return np.round(pos + (R @ np.array([1,0])))
-
-    def can_be_pushed(self,point,direction):
-        idxs = np.where([np.any(np.all(point == line,axis=1)) for line in self.points if line != []])[0]
-        if idxs.size == 0:
-            return False
-        idx = idxs[0]
-
-        if self.left:
-            point_direction = idx*np.pi/2 + self.start_direction
-        else:
-            point_direction = idx*-np.pi/2 + self.start_direction
-
-        # construct second points for testing with no overlap
-        # R_seg = R_mat(point_direction)
-        # R_test = R_mat(direction)
-        # line_point = point + (R_seg @ np.array([0.1,0]))
-        # test_point = point + (R_test @ np.array([0.1,0]))
-        line_point = self._step(point,point_direction)
-        test_point = self._step(point,direction)
-
-
-        # if original point came from the left (side that can be pushed from), the test point will have been created on the right.
-        return ((line_point[0]-point[0])*(test_point[1]-point[1]) - (line_point[1]-point[1])*(test_point[0]-point[0])) < 0
-
-            
+           
     def has_point(self,point):
-        return any(np.all(point==p) for line in self.points for p in line)\
+        return any(np.all(abs(point - p) < 1e-3,axis=1) for line in self.lines for p in line)\
             or (self.end_crossing.pos is not None and np.all(point == self.end_crossing.pos))\
             or (self.start_crossing.pos is not None and np.all(point == self.start_crossing.pos))
 
-    def modify_path(self,hit_point,segments):
-        idx = np.where([np.any(np.all(hit_point == line,axis=1)) for line in self.points if line != []])[0][0]
-        
-        if self.left:
-            direction = (idx-1)*np.pi/2 + self.start_direction
+    def handle_collision(self,point,direction,segments,crossings):
+
+        def collides(position) -> bool:
+            for seg in segments[:self.segment_num]:
+                if seg != self and seg.has_point(position):
+                    return True
+            return False
+
+        if self.end_crossing.pos is None:
+            moves_end = False
         else:
-            direction = (idx-1)*-np.pi/2 + self.start_direction
+            dir = np.round(direction/np.pi*2) % 4
+            if dir == 0:
+                moves_end = self.end_crossing.pos[0,0] > point[0,0]
+            elif dir == 1:
+                moves_end = self.end_crossing.pos[0,1] > point[0,1]
+            elif dir == 2:
+                moves_end = self.end_crossing.pos[0,0] < point[0,0]
+            elif dir == 3:
+                moves_end = self.end_crossing.pos[0,1] < point[0,1]
 
-        # Need to move a crossing
-        if idx == 0:
-            self.start_crossing.move(direction)
-            raise DisplayError('Moved crossings')
-        elif idx == len(self.points) - 1:
-            self.end_crossing.move(direction)
-            for seg in segments[self.segment_num + 1:]:
-                if np.all(np.array(seg.end_crossing.numbers) > self.segment_num):
-                    seg.points = [[]]
-                    seg.end_crossing.pos = None
-            raise DisplayError('Moved crossings')
+        if moves_end:
 
-        self.points = self.points[:idx]
+            forward_point = point + (R_mat(direction) @ np.array([1,0]))
 
-        if self.points == []:
-            raise Exception('TODO')
-        pos = self.points[-1][-1]
+            cross_prod = ((self.end_crossing.pos[0,0]-point[0,0])*(forward_point[0,1]-point[0,1]) - (self.end_crossing.pos[0,1]-point[0,1])*(forward_point[0,0]-point[0,0]))
 
-        # while True:
-        #     test_pos = self._step(pos,direction)
-        #     for seg in segments[:self.segment_num]:
-        #         if seg != self and seg.has_point(test_pos):
-        #             self.handle_collision(test_pos,direction,segments)
-        #     else:
-        #         break
-        # self.points[-1].append(test_pos)
-        return pos,direction
-''
-    def handle_collision(self,point, direction,segments):
-        for seg_num in range(self.segment_num):
-            if segments[seg_num].has_point(point):
-                if segments[seg_num].can_be_pushed(point,direction):
-                    
-                    for i in range(seg_num + 1,self.segment_num + 1):
-                        segments[i].points = [[]] # erase the paths that subsequent segments have made, including this one.
-
-                    pos,direction = segments[seg_num].modify_path(point,segments)
-
-                          
-
-                    # regenerate paths
-                    for i in range(seg_num,self.segment_num + 1):
-                        pos,direction = segments[i].find_path(segments,pos,direction)
-                    
-                    break
+            while collides(point):
+                if cross_prod > 0:
+                    for seg in segments[:self.segment_num + 1]:
+                        if self.left:
+                            seg.modify_path(point,direction,direction+np.pi/2)
+                        else:
+                            seg.modify_path(point,direction,direction-np.pi/2)
+                    for cross in crossings:
+                        if self.left:
+                            cross.move(point,direction+np.pi/2)
+                        else:
+                            cross.move(point,direction-np.pi/2)
                 else:
-                    raise NotImplementedError
-        return pos,direction
+                    for seg in segments[:self.segment_num + 1]:
+                        if self.left:
+                            seg.modify_path(point,direction,direction-np.pi/2)
+                        else:
+                            seg.modify_path(point,direction,direction+np.pi/2)
+                    for cross in crossings:
+                        if self.left:
+                            cross.move(point,direction+np.pi/2)
+                        else:
+                            cross.move(point,direction-np.pi/2)
+
+        
+        else:
+            for seg in segments[:self.segment_num]:
+                seg.modify_path(point,direction)
+            for cross in crossings:
+                cross.move(point,direction)
+
+        # if self.end_crossing.pos is not None and np.linalg.norm(point-self.end_crossing.pos) > end_dist_before: # end point got pushed away. Push it orthogonally to help avoid infinite loops
+
+    def modify_path(self,point,direction,inside_direction=None,save_crossings=False):
+
+        def is_between(A,B,test):
+            return np.logical_and(
+                np.logical_and( # x values
+                    test[:,0] >= min(A[0,0],B[0,0]),
+                    test[:,0] <= max(A[0,0],B[0,0]),
+                ),
+                np.logical_and( # y values
+                    test[:,1] >= min(A[0,1],B[0,1]),
+                    test[:,1] <= max(A[0,1],B[0,1]),
+                )
+            )
+
+        if save_crossings:
+            start = self.lines[0][0,:]
+            end = self.lines[-1][-1,:]
+
+        dir = np.round(direction/np.pi*2) % 4
+        if inside_direction is None:
+            for line_idx in range(len(self.lines)):
+                if len(self.lines[line_idx]) > 0:
+                    if dir == 0:
+                        self.lines[line_idx][np.where((self.lines[line_idx][:,0] >= point[0,0]))] += np.array([1,0])
+                    elif dir == 1:
+                        self.lines[line_idx][np.where((self.lines[line_idx][:,1] >= point[0,1]))] += np.array([0,1])
+                    elif dir == 2:
+                        self.lines[line_idx][np.where((self.lines[line_idx][:,0] <= point[0,0]))] -= np.array([1,0])
+                    elif dir == 3:
+                        self.lines[line_idx][np.where((self.lines[line_idx][:,1] <= point[0,1]))] -= np.array([0,1])
+            
+
+        else:
+            if dir == 0:
+                exclude_point = np.array([-np.inf,-np.inf]) if inside_direction > direction else np.array([-np.inf,np.inf],ndmin=2)
+            elif dir == 1:
+                exclude_point = np.array([np.inf,-np.inf]) if inside_direction > direction else np.array([-np.inf,-np.inf],ndmin=2)
+            elif dir == 2:
+                exclude_point = np.array([np.inf,np.inf]) if inside_direction > direction else np.array([np.inf,-np.inf],ndmin=2)
+            elif dir == 3:
+                exclude_point = np.array([-np.inf,np.inf]) if inside_direction > direction else np.array([np.inf,np.inf],ndmin=2)
+            for line_idx in range(len(self.lines)):
+                if len(self.lines[line_idx]) > 0:
+
+                    mask = np.logical_or(np.all(abs(self.lines[line_idx] - point) < 1e-3,axis=1),np.logical_not(is_between(exclude_point,point,self.lines[line_idx])))
+                    self.lines[line_idx][mask] += R_mat(inside_direction) @ np.array([1,0])
+                # self.lines[line_idx][np.where(np.logical_or(np.logical_not(np.logical_and((self.lines[line_idx][:,1] >= point[0,1]),np.array([(self.lines[line_idx][:,0] < point[0,0]) == (inside_direction > direction)]).flatten())),np.all(self.lines[line_idx] == point,axis=1)))] += R_mat(inside_direction) @ np.array([1,0])
+
+        
+        # fill in gaps
+        for line_idx in range(len(self.lines)):
+            idx = 0
+            while idx < len(self.lines[line_idx]) - 1:
+                if np.any(abs(self.lines[line_idx][idx] - self.lines[line_idx][idx+1]) > 1.5):
+                    self.lines[line_idx] = np.insert(self.lines[line_idx],idx+1,np.round((self.lines[line_idx][idx]+self.lines[line_idx][idx+1]))/2,axis=0)
+                idx += 1    
 
 
-    def find_path(self,segments,pos=np.array([0,0]),direction = 0):
-        if self.points == [[]]:
-            self.start_direction = direction
-            self.points[-1].append(pos)
+        if save_crossings:
+            self.lines[0][0,:] = start
+            self.lines[-1][-1,:] = end
+
+
+    def find_path(self,segments,crossings,pos,direction = 0):
         
         R = R_mat(direction)
         def can_turn() -> bool:
@@ -334,9 +351,8 @@ class Segment:
             turn()
 
             test_pos = self._step(pos,direction)
-            cross = ((test_pos[0]-pos[0])*(self.end_crossing.pos[1]-pos[1]) - (test_pos[1]-pos[1])*(self.end_crossing.pos[0]-pos[0]))
-            res = (np.all(test_pos == self.end_crossing.pos) or not collides(test_pos) or any(seg.can_be_pushed(test_pos,direction) for seg in segments))\
-                and (abs(cross) < 1e-3 or self.left == (cross > 0))
+            cross = ((test_pos[0,0]-pos[0,0])*(self.end_crossing.pos[0,1]-pos[0,1]) - (test_pos[0,1]-pos[0,1])*(self.end_crossing.pos[0,0]-pos[0,0]))
+            res = np.all(test_pos == self.end_crossing.pos) or abs(cross) < 1e-3 or self.left == (cross > 0)
 
             self.left = not self.left
             turn()
@@ -360,50 +376,43 @@ class Segment:
 
         
         if self.start_crossing.pos is None:
-            self.start_crossing.pos = pos
+            raise Exception
 
         if self.end_crossing.pos is None:
             test_pos = self._step(pos,direction)
             if collides(test_pos):
-                pos,direction = self.handle_collision(test_pos,direction,segments)
-            else:
-                self.end_crossing.pos = test_pos
-                pos = test_pos
-                self.points[-1].append(pos)
-            return pos,direction
+                self.handle_collision(test_pos,direction,segments,crossings)
+            self.end_crossing.pos = test_pos
 
+        self.lines = [pos]
+        self.start_direction = direction
         while True:
 
-            test_pos = self._step(pos,direction)
-            if np.all(test_pos == self.end_crossing.pos):
-                pos = test_pos
-                self.points[-1].append(pos)
+            pos = self._step(pos,direction)
+            if np.all(pos == self.end_crossing.pos):
+                self.lines[-1] = np.vstack([self.lines[-1],pos])
                 break
-            if collides(test_pos):
-                pos,direction = self.handle_collision(test_pos,direction,segments)
-                break
-            else:
-                pos = test_pos
-                self.points[-1].append(pos)
 
-                if can_turn():
-                    turn()
-                    self.points.append([])
-        self.end_direction = direction
+            if collides(pos):
+                self.handle_collision(pos,direction,segments,crossings)
+
+            self.lines[-1] = np.vstack([self.lines[-1],pos])
+            if can_turn():
+                turn()
+                self.lines.append(pos)
+
         return pos,direction
 
-    def plot(self):
-        try:
-            lines = [np.vstack(line) for line in self.points if line != []]
+    def plot(self,*line_args,**line_kwargs):
+        full = np.vstack([*self.lines])
 
-            # full = np.vstack([self.start_crossing.pos,*lines,self.end_crossing.pos])
-            full = np.vstack([*lines])
-            plt.plot(full[:,0],full[:,1])    
-        except ValueError:
-            pass
-''
-class DisplayError(Exception):
-    pass      
+        if not self.starts_over:
+            full[0,:] = full[0,:] + (full[1,:] - full[0,:]) * line_kwargs.get('removal_amount',0.2)
+        if not self.ends_over:
+            full[-1,:] = full[-1,:] + (full[-2,:] - full[-1,:]) * line_kwargs.get('removal_amount',0.2)
+
+        plt.plot(full[:,0],full[:,1], *line_args, **line_kwargs)    
+ 
 
 
 
@@ -704,14 +713,14 @@ def reduce_representation(rep_large,indices):
 
 if __name__ == '__main__':
     # For quick testing.
-    # random.seed(1)
+    random.seed(1)
     t = np.array([
-        [ 0, 1, 2, 3, 4, 5, 6, 7, 8, 9],
-        [ 3, 4, 7, 0, 1, 6, 5, 2, 9, 8],
-        [ 1, 1, 1,-1,-1, 1,-1, -1, 1,-1],
-        [ 1, 1,-1, 1, 1, 1, 1,-1, 1, 1]
+        [ 0, 1, 2, 3, 4, 5, 6, 7, 8, 9,10,11],
+        [11, 4, 5, 8, 1, 2, 7, 6, 3,10, 9, 0],
+        [ 1, 1, 1, 1,-1,-1, 1,-1,-1, 1,-1,-1],
+        [-1, 1, 1,-1, 1, 1, 1, 1,-1, 1, 1,-1]
     ])
-    t = generate_random_topology(3).astype(np.int)
+    # t = generate_random_topology(10).astype(np.int)
     print(t)
     t = RopeTopology(t)
     t.create_display()

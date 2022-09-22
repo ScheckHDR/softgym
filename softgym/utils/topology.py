@@ -68,7 +68,7 @@ class RopeTopology:
     def display(self):
         if not self._has_display:
             self.create_display()
-        self._display.display()
+
     
 
     
@@ -94,7 +94,7 @@ class RopeDisplay:
         self.topology = topology
 
         self.segments = []
-        self.crossings = [Crossing()] # start of the rope
+        self.crossings = [Crossing(position=np.array([-1,0]))] # start of the rope
 
         prev_crossing = self.crossings[-1]
 
@@ -122,25 +122,32 @@ class RopeDisplay:
         #     seg.find_path(self.segments)
         
 
-        # add a "crossing" for the end
+        # add a final segment
+        final_segment = Segment(segment_num + 1,True) # assume goes left. Shouldn't matter anyway
+        self.crossings[-1].attach_segment(final_segment,incoming=False)
         self.crossings.append(Crossing())
-        self.crossings[-1].attach_segment(new_seg,incoming=True,over=True) # can assume over for last segment, just incase of graphical issues.
+        self.crossings[-1].attach_segment(final_segment,incoming=True,over=True) # can assume over for last segment, just incase of graphical issues.
 
         while True:
-            pos=np.array([-1,0])
+            pos= self.crossings[0].pos
             direction = 0
             try:
                 for i in range(len(self.segments)):
                     pos,direction = self.segments[i].find_path(self.segments,pos,direction)
                     plt.clf()
-                    for j in range(i+1):
-                        self.segments[j].plot()
-                    plt.axis('square')
-                    plt.show()
+                    # for j in range(i+1):
+                    #     self.segments[j].plot()
+                    # plt.axis('square')
+                    # plt.show()
                 break
             except DisplayError:
                 for seg in self.segments:
                     seg.points = [[]]
+
+        for j in range(i+1):
+            self.segments[j].plot()
+        plt.axis('square')
+        plt.show()
 
 
 
@@ -151,7 +158,7 @@ class RopeDisplay:
             
 
 class Crossing:
-    def __init__(self,numbers=[-1,-1]):
+    def __init__(self,numbers=[-1,-1],position = None):
         self.numbers = numbers
 
         self.over_in = None
@@ -159,7 +166,7 @@ class Crossing:
         self.over_out = None
         self.under_out = None
 
-        self.pos = None
+        self.pos = position
 
     def attach_segment(self,segment,incoming:bool,over:bool=None,is_start:bool=False):
         assert not (incoming == True and over is None), f'Cannot have an incoming segment without knowing if it is over or under.'
@@ -272,6 +279,10 @@ class Segment:
             raise DisplayError('Moved crossings')
         elif idx == len(self.points) - 1:
             self.end_crossing.move(direction)
+            for seg in segments[self.segment_num + 1:]:
+                if np.all(np.array(seg.end_crossing.numbers) > self.segment_num):
+                    seg.points = [[]]
+                    seg.end_crossing.pos = None
             raise DisplayError('Moved crossings')
 
         self.points = self.points[:idx]
@@ -289,7 +300,7 @@ class Segment:
         #         break
         # self.points[-1].append(test_pos)
         return pos,direction
-
+''
     def handle_collision(self,point, direction,segments):
         for seg_num in range(self.segment_num):
             if segments[seg_num].has_point(point):
@@ -348,10 +359,6 @@ class Segment:
             return False
 
         
-
-
-
-
         if self.start_crossing.pos is None:
             self.start_crossing.pos = pos
 
@@ -394,7 +401,7 @@ class Segment:
             plt.plot(full[:,0],full[:,1])    
         except ValueError:
             pass
-
+''
 class DisplayError(Exception):
     pass      
 
@@ -697,14 +704,14 @@ def reduce_representation(rep_large,indices):
 
 if __name__ == '__main__':
     # For quick testing.
-    random.seed(1)
+    # random.seed(1)
     t = np.array([
         [ 0, 1, 2, 3, 4, 5, 6, 7, 8, 9],
         [ 3, 4, 7, 0, 1, 6, 5, 2, 9, 8],
         [ 1, 1, 1,-1,-1, 1,-1, -1, 1,-1],
-        [ 1, 1, 1, 1, 1, 1, 1, 1, 1, 1]
+        [ 1, 1,-1, 1, 1, 1, 1,-1, 1, 1]
     ])
-    # t = generate_random_topology(3).astype(np.int)
+    t = generate_random_topology(3).astype(np.int)
     print(t)
     t = RopeTopology(t)
     t.create_display()

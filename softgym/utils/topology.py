@@ -237,24 +237,26 @@ class Segment:
             return False
 
         if self.end_crossing.pos is None:
-            moves_end = False
+            move_side = False
+            exclude_point = None
         else:
+            inside_direction = direction + (np.pi/2 if self.left else -np.pi/2)
             dir = np.round(direction/np.pi*2) % 4
             if dir == 0:
                 move_side = (self.end_crossing.pos[0,0] - point[0,0]) > -1e-1
+                exclude_point = np.array([-np.inf,-np.inf]) if inside_direction > direction else np.array([-np.inf,np.inf],ndmin=2)
             elif dir == 1:
                 move_side = (self.end_crossing.pos[0,1] - point[0,1]) > -1e-3
+                exclude_point = np.array([np.inf,-np.inf]) if inside_direction > direction else np.array([-np.inf,-np.inf],ndmin=2)
             elif dir == 2:
-                move_side = (self.end_crossing.pos[0,0] - point[0,0]) < 1e-3
+                move_side = (self.end_crossing.pos[0,0] - point[0,0]) <  1e-3
+                exclude_point = np.array([np.inf,np.inf]) if inside_direction > direction else np.array([np.inf,-np.inf],ndmin=2)
             elif dir == 3:
-                move_side = (self.end_crossing.pos[0,1] - point[0,1]) < 1e-3
+                move_side = (self.end_crossing.pos[0,1] - point[0,1]) <  1e-3
+                exclude_point = np.array([-np.inf,np.inf]) if inside_direction > direction else np.array([np.inf,np.inf],ndmin=2)
+
 
         if move_side:
-
-            # forward_point = point + (R_mat(direction) @ np.array([1,0]))
-
-            # cross_prod = ((self.end_crossing.pos[0,0]-point[0,0])*(forward_point[0,1]-point[0,1]) - (self.end_crossing.pos[0,1]-point[0,1])*(forward_point[0,0]-point[0,0]))
-
             while collides(point):
 
                 for seg in segments[:self.segment_num + 1]:
@@ -278,7 +280,7 @@ class Segment:
 
         # if self.end_crossing.pos is not None and np.linalg.norm(point-self.end_crossing.pos) > end_dist_before: # end point got pushed away. Push it orthogonally to help avoid infinite loops
 
-    def modify_path(self,point,curving_left:bool,direction,inside_direction=None,end_crossing=None):
+    def modify_path(self,point,curving_left:bool,direction,exclude_point = None):
 
         def is_between(A,B,test):
             return np.logical_and(
@@ -307,7 +309,6 @@ class Segment:
             
 
         else:
-            forward_point = point + np.round(R_mat(direction) @ np.array([1,0]))
             if dir == 0:
                 exclude_point = np.array([-np.inf,-np.inf]) if inside_direction > direction else np.array([-np.inf,np.inf],ndmin=2)
             elif dir == 1:
@@ -317,22 +318,11 @@ class Segment:
             elif dir == 3:
                 exclude_point = np.array([-np.inf,np.inf]) if inside_direction > direction else np.array([np.inf,np.inf],ndmin=2)
 
-            end_cross = ((forward_point[0,0] - point[0,0])*(end_crossing.pos[:,1] - point[0,1]) - (forward_point[0,1]-point[0,1])*(end_crossing.pos[:,0]-point[0,0]))
             for line in self.lines:
                 if len(line) > 0:
-
-                    cross_prods = ((forward_point[0,0] - point[0,0])*(line[:,1] - point[0,1]) - (forward_point[0,1]-point[0,1])*(line[:,0]-point[0,0]))
                     
+                    mask = np.logical_or(np.all(abs(line - point) < 1e-3,axis=1),np.logical_not(is_between(exclude_point,point,line)))
 
-                    if abs(end_cross) < 1e-3:
-                        cross_mask = np.logical_and(curving_left == (cross_prods > 1e-3),np.logical_not(np.all(abs(line-end_crossing.pos) < 1e-3,axis=1)))
-                        mask = np.logical_and(cross_mask,np.logical_or(np.all(abs(line - point) < 1e-3,axis=1),np.logical_not(is_between(exclude_point,point,line))))
-
-                    else:
-                        # cross_mask = np.logical_or(curving_left == (cross_prods >= -1e-3), np.abs(cross_prods) < 1e-3)
-                        mask = np.logical_or(np.all(abs(line - point) < 1e-3,axis=1),np.logical_not(is_between(exclude_point,point,line)))
-
-                    # mask = np.logical_or(cross_mask,np.logical_or(np.all(abs(self.lines[line_idx] - point) < 1e-3,axis=1),np.logical_not(is_between(exclude_point,point,self.lines[line_idx]))))
                     line[mask] += R_mat(inside_direction) @ np.array([1,0])
                 # self.lines[line_idx][np.where(np.logical_or(np.logical_not(np.logical_and((self.lines[line_idx][:,1] >= point[0,1]),np.array([(self.lines[line_idx][:,0] < point[0,0]) == (inside_direction > direction)]).flatten())),np.all(self.lines[line_idx] == point,axis=1)))] += R_mat(inside_direction) @ np.array([1,0])
 
@@ -356,9 +346,10 @@ class Segment:
 
             test_pos = self._step(pos,direction)
             if collides(test_pos):
-                return False
-            cross = ((test_pos[0,0]-pos[0,0])*(self.end_crossing.pos[0,1]-pos[0,1]) - (test_pos[0,1]-pos[0,1])*(self.end_crossing.pos[0,0]-pos[0,0]))
-            res = np.all(test_pos == self.end_crossing.pos) or abs(cross) < 1e-3 or self.left == (cross > 0)
+                res = np.all(test_pos == self.end_crossing.pos)
+            else:
+                cross = ((test_pos[0,0]-pos[0,0])*(self.end_crossing.pos[0,1]-pos[0,1]) - (test_pos[0,1]-pos[0,1])*(self.end_crossing.pos[0,0]-pos[0,0]))
+                res = np.all(test_pos == self.end_crossing.pos) or abs(cross) < 1e-3 or self.left == (cross > 0)
 
             self.left = not self.left
             turn()

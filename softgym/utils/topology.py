@@ -132,11 +132,11 @@ class RopeDisplay:
         direction = 0
         for i in range(len(self.segments)):
             pos,direction = self.segments[i].find_path(self.segments,self.crossings,pos,direction)
-            # plt.clf()
-            # for j in range(i+1):
-            #     self.segments[j].plot()
-            # plt.axis('square')
-            # plt.draw()
+            plt.clf()
+            for j in range(i+1):
+                self.segments[j].plot()
+            plt.axis('square')
+            plt.draw()
             # plt.pause(0.5)
 
         self.plot(3)
@@ -162,6 +162,8 @@ class Crossing:
 
         self.pos = position
 
+        self.attached_segments = []
+
     def attach_segment(self,segment,incoming:bool,over:bool=None,is_start:bool=False):
         assert not (incoming == True and over is None), f'Cannot have an incoming segment without knowing if it is over or under.'
         if incoming:
@@ -179,10 +181,12 @@ class Crossing:
                 raise Exception('Out segment without an in segment')
         segment.attach_crossing(self,not incoming)
 
+        self.attached_segments.append(segment)
+
     def is_crossing(self,num):
         return num in self.numbers
 
-    def move(self,ref_point, direction,):
+    def move(self, ref_point, direction,):
         if self.pos is None:
             return
 
@@ -200,7 +204,7 @@ class Crossing:
 class Segment:
     def __init__(self,segment_num,starts_over:bool,ends_over:bool,goes_left:bool):
         self.left = goes_left > 0
-        self.path = np.empty(2)
+        self.path = None
         self.segment_num = segment_num
 
         self.start_crossing = None
@@ -221,75 +225,73 @@ class Segment:
     
            
     def has_point(self,point):
-        return any(np.all(abs(self.path - point) < 1e-3,axis=1))\
+        if self.path is None:
+            return False
+        return any(np.all(abs(self.path - point.reshape([1,2])) < 1e-3,axis=1))\
             or (self.end_crossing.pos is not None and np.all(point == self.end_crossing.pos))\
             or (self.start_crossing.pos is not None and np.all(point == self.start_crossing.pos))
 
     def handle_collision(self,point,direction,segments,crossings):
 
-        # inside_direction = direction + (np.pi/2 if self.left else -np.pi/2)
-        # dir = np.round(direction/np.pi*2) % 4
-        # if dir == 0:
-        #     move_side = (self.end_crossing.pos[0,0] - point[0,0]) > -1e-1
-        #     exclude_point = np.array([-np.inf,-np.inf]) if inside_direction > direction else np.array([-np.inf,np.inf],ndmin=2)
-        # elif dir == 1:
-        #     move_side = (self.end_crossing.pos[0,1] - point[0,1]) > -1e-3
-        #     exclude_point = np.array([np.inf,-np.inf]) if inside_direction > direction else np.array([-np.inf,-np.inf],ndmin=2)
-        # elif dir == 2:
-        #     move_side = (self.end_crossing.pos[0,0] - point[0,0]) <  1e-3
-        #     exclude_point = np.array([np.inf,np.inf]) if inside_direction > direction else np.array([np.inf,-np.inf],ndmin=2)
-        # elif dir == 3:
-        #     move_side = (self.end_crossing.pos[0,1] - point[0,1]) <  1e-3
-        #     exclude_point = np.array([-np.inf,np.inf]) if inside_direction > direction else np.array([np.inf,np.inf],ndmin=2)
 
 
-        # if move_side:
-        #     while collides(point):
+        crossings_moved_flag = False
+        for seg in segments[:]:
+            if seg.has_point(point) and seg is not self and np.any(point != seg.end_crossing.pos) and np.any(point != seg.start_crossing.pos):
+                if seg.modify_path(point,direction,segments,crossings,self):
+                    crossings_moved_flag = True
+                    for c in crossings:
+                        c.move(seg.path[-1,:],direction)
 
-        #         for seg in segments[:self.segment_num + 1]:
-        #             if self.left:
-        #                 seg.modify_path(point,self.left,direction,direction+np.pi/2,self.end_crossing)
-        #             else:
-        #                 seg.modify_path(point,self.left,direction,direction-np.pi/2,self.end_crossing)
-        #         for cross in crossings:
-        #             if self.left:
-        #                 cross.move(point,self.left,direction+np.pi/2,direction)
-        #             else:
-        #                 cross.move(point,self.left,direction-np.pi/2,direction)
+        return crossings_moved_flag
 
 
-        
-        for seg in segments[:self.segment_num]:
-            seg.modify_path(point,direction)
-        for cross in crossings:
-                cross.move(point,direction)
 
-        # if self.end_crossing.pos is not None and np.linalg.norm(point-self.end_crossing.pos) > end_dist_before: # end point got pushed away. Push it orthogonally to help avoid infinite loops
-
-    def modify_path(self,point,direction):
-
-        def is_between(A,B,test):
-            return np.logical_and(
-                np.logical_and( # x values
-                    test[:,0] >= min(A[0,0],B[0,0]),
-                    test[:,0] <= max(A[0,0],B[0,0]),
-                ),
-                np.logical_and( # y values
-                    test[:,1] >= min(A[0,1],B[0,1]),
-                    test[:,1] <= max(A[0,1],B[0,1]),
-                )
-            )
+    def modify_path(self,point,direction,segments,crossings,caller):
+        if self.path is None:
+            return
+        point = point.reshape([1,2])
+        def collides(position) -> bool:
+            for seg in segments:
+                if seg != self and seg.has_point(position):
+                    return True
+            return False
 
         dir = np.round(direction/np.pi*2) % 4
 
         if dir == 0:
-            self.path[np.where(self.path[:,0] >= point[0])] += np.array([1,0])
+            offset = np.array([1,0])
         elif dir == 1:
-            self.path[np.where(self.path[:,1] >= point[1])] += np.array([0,1])
+            offset = np.array([0,1])
         elif dir == 2:
-            self.path[np.where(self.path[:,0] <= point[0])] -= np.array([1,0])
+            offset = np.array([1,0])
         elif dir == 3:
-            self.path[np.where(self.path[:,1] <= point[1])] -= np.array([0,1])
+            offset = np.array([0,1])
+
+        idx = 0
+        prev_corner_idx = 0
+        while idx <self.path.shape[0]-1:
+            cross_prod = ((self.path[idx,0] - self.path[idx-1,0])*(self.path[idx+1,1] - self.path[idx-1,1]) - (self.path[idx,1]-self.path[idx-1,1])*(self.path[idx+1,0]-self.path[idx-1,0]))
+
+            if abs(cross_prod) < 1e-3 and idx < self.path.shape[0] - 2:
+                pass 
+            else:
+                if idx >= self.path.shape[0] - 2:
+                    idx = self.path.shape[0]-1
+                if np.any(np.all(self.path[prev_corner_idx:idx+1,:] == point,axis=1)):
+                    offset = np.round(np.array([0,0]) + R_mat(direction) @ np.array([1,0]),1)
+                    self.path[prev_corner_idx:idx+1] += offset
+
+                    for i in range(prev_corner_idx,idx+1):
+                        if collides(self.path[i,:].reshape([1,2])):
+                            self.handle_collision(self.path[i,:].reshape([1,2]),direction,segments,crossings)
+                            break # once lines have been moved once, all other points should avoid collision.
+                
+                prev_corner_idx = idx
+
+            idx += 1
+
+
 
         idx = 0
         while idx < self.path.shape[0] - 1:
@@ -298,14 +300,13 @@ class Segment:
                 self.path = np.insert(self.path,idx+1,np.round(self.path[idx,:] + diff/np.linalg.norm(diff) * 0.5,1),axis=0)
             idx += 1
 
-        # fill in gaps
-        # for line_idx in range(len(self.lines)):
-        #     idx = 0
-        #     while idx < len(self.lines[line_idx]) - 1:
-        #         if np.any(abs(self.lines[line_idx][idx] - self.lines[line_idx][idx+1]) > 1):
-        #             self.lines[line_idx] = np.insert(self.lines[line_idx],idx+1,np.round((self.lines[line_idx][idx]+self.lines[line_idx][idx+1]))/2,axis=0)
-        #         idx += 1    
-
+        if np.any(self.start_crossing.pos != self.path[0,:]):
+            self.start_crossing.pos = self.path[0,:]
+            return True        
+        if np.any(self.end_crossing.pos != self.path[-1,:]):
+            self.end_crossing.pos = self.path[-1,:]
+            return True
+        return False
 
 
     def find_path(self,segments,crossings,pos,direction = 0):
@@ -370,8 +371,11 @@ class Segment:
 
 
         while True:
-            occupied_points = np.vstack([seg.get_points() for seg in segments])
-            self.path = np.vstack((self.path,*find_grid_path(pos,self.end_crossing.pos,occupied_points,not self.left)))
+            occupied_points = np.vstack([seg.get_points() for seg in segments if seg.path is not None])
+            path = find_grid_path(pos,self.end_crossing.pos,occupied_points,not self.left)
+            if path is None:
+                raise InvalidTopology("Could not verify topology is valid.")
+            self.path = np.vstack((self.path,*path))
         
             # correct the path
             prev_corner_idx = 0
@@ -410,12 +414,18 @@ class Segment:
 
                                 for i in range(prev_corner_idx,idx+1):
                                     if collides(self.path[i,:]):
-                                        self.handle_collision(self.path[i,:],direction,segments,crossings)
+                                        if self.handle_collision(self.path[i,:],direction,segments,crossings):
+                                            for seg in segments[:self.segment_num]:
+                                                seg.path = None
+                                            pos = segments[0].start_crossing.pos
+                                            direction = 0
+                                            for seg in segments[:self.segment_num]:
+                                                pos,direction = seg.find_path(segments,crossings,pos,direction)
                                         break # once lines have been moved once, all other points should avoid collision.
 
                                 break
                         else:
-                            # can't move the corner backwards
+                            # can move the corner backwards
                             self.path[prev_corner_idx:idx+1] = test
                             self.path = np.insert(self.path,idx+1,corner_pos,axis=0) # refill the new whole
                             self.path = np.delete(self.path,prev_corner_idx-1,axis=0) # remove the duplicate
@@ -438,21 +448,6 @@ class Segment:
         pos = self.path[-1,:]
 
 
-        # while True:
-
-
-        #     pos = self._step(pos,direction)
-        #     if np.all(abs(pos - self.end_crossing.pos) < 1e-3):
-        #         self.lines[-1] = np.vstack([self.lines[-1],pos])
-        #         break
-
-        #     if collides(pos):
-        #         self.handle_collision(pos,direction,segments,crossings)
-
-        #     self.lines[-1] = np.vstack([self.lines[-1],pos])
-        #     if can_turn():
-        #         turn()
-        #         self.lines.append(pos)
 
         return pos,direction
 
@@ -466,11 +461,16 @@ class Segment:
 
         plt.plot(full[:,0],full[:,1], *line_args, **line_kwargs)    
  
-
+class InvalidTopology(Exception):
+    pass
 
 def find_grid_path(start,end,occupancy,come_from_left:bool):
     start = start.reshape([1,2])
     end = end.reshape([1,2])
+
+    grid_max = np.max(occupancy) + np.array([1,1])
+    grid_min = np.min(occupancy) - np.array([1,1])
+    
 
     class Node:
         def __init__(self,value,parent,priority):
@@ -507,10 +507,15 @@ def find_grid_path(start,end,occupancy,come_from_left:bool):
                     final_node = test
                     break
             elif not np.any(np.all(occupancy == test.value,axis=1))\
-                and test not in visited:
+                and test not in visited\
+                and np.all(test_pos > grid_min)\
+                and np.all(test_pos < grid_max):
                 frontier.put(test)
         else:
             visited.append(current)
+
+    if final_node is None:
+        return None
 
     positions = []
     while final_node is not None:
@@ -520,128 +525,6 @@ def find_grid_path(start,end,occupancy,come_from_left:bool):
     return np.vstack(positions)
 
         
-            
-
-
-
-'''
-class DisplayRep:
-    def __init__(self,bounds = None,parent = None,curved_left = True):
-        
-        self.sub_displays = []
-        self.runs = []
-        if bounds is not None:
-            self.bound_min = min(*bounds)
-            self.bound_max = max(*bounds)
-            self.bound_start = bounds[0]
-            self.bound_end = bounds[1]
-        else:
-            self.bound_min = 0
-            self.bound_max = 0
-            self.bound_start = 0
-            self.bound_end = 0
-        self.parent = parent
-        self.depth = 0 if parent is None else self.parent.depth + 1
-        self.contains_start = True if self.depth == 0 else False
-        self.contains_end = False
-        self.curved_left = curved_left
-
-    def get_size(self):
-        sum = 1
-        for sub in self.sub_displays:
-            sum += 2*sub.get_size()
-
-    def display(self,pos=np.array([[0],[0]]),direction=0,positions={0:np.array([[0],[0]])}):
-        T = get_transformation_matrix((pos[0],pos[1]),direction)
-        area_size = self.get_size()
-        end_pos = pos + get_transformation_matrix([0,0],direction)@np.array([[area_size],[0],[1]])
-        num_sub_points = self.bound_max - self.bound_min - 1
-        for i in range(1,num_sub_points+1):
-            positions[self.bound_min]
-        
-
-
-
-    def can_enter(self,crossing_num):
-        return self.depth > 0 and self.bound_min < crossing_num < self.bound_max # base frame has no bounds
-
-    def process(self,topology,section_to_process = 0,entrance = 0):
-        
-        self.runs.append([entrance])
-
-        # reduced = topology
-        while topology.size() != 0:
-            try:
-                bounds = topology.get_col(section_to_process)[:2]
-
-                entering_sub = True
-                region_bounds = bounds
-                # for sub in self.sub_displays:
-                #     if sub.can_enter(bounds[0]):
-                #         entering_sub = True
-                #         region_bounds = [self.bound_start,bounds[1]]
-                #         break
-
-                new_region = DisplayRep(bounds=region_bounds,parent=self)
-                self.sub_displays.append(new_region)
-                self.runs[-1].append(new_region)
-
-                reduced = topology.get_sub_topology(bounds)
-
-                # tests enters a sub region, and entering a different sub region after exiting one.
-                exiting_sub = None
-                while entering_sub:
-                    for sub in self.sub_displays:
-                        if sub.can_enter(bounds[0]) and sub != exiting_sub:
-                            self.runs[-1].append(section_to_process)
-                            section_to_process = topology.corresponding(section_to_process) + 1
-                            reduced,section_to_process = sub.process(reduced,section_to_process,entrance=bounds[1])
-
-                            exiting_sub = sub
-
-                            if section_to_process is not None:
-                                self.runs.append([topology.corresponding(section_to_process)])
-
-
-                            break
-                    else:
-                        # could not re-enter a different sub region.
-                        break
-                    
-
-
-                # test exits the region.
-                if self.bound_min < bounds[1] < self.bound_max:
-                    self.runs[-1].append(bounds[1])
-                    return reduced, section_to_process
-                
-                topology = reduced
-            except IndexError:
-                pass # Probably means the corresponding index immediately followed (R1 move) and got deleted. Will automatically move to next segment.
-            if section_to_process is not None:
-                section_to_process += 1
-        if section_to_process is not None:
-            self.contains_end = True
-        return reduced, None
-
-    def __str__(self):
-            rep = ''
-            if self.contains_start:
-                rep += 'S\n'
-            else:
-                rep += '\t'*(self.depth-1) + f'{self.bound_start},{self.bound_end}\n'
-
-            for sub in self.sub_displays:
-                rep += f'{sub}'
-
-            if self.contains_end:
-                rep += '\t'*(self.depth) + 'E\n'
-
-            return rep'''
-
-                
-
-    
 
 def get_topological_representation(positions):
     intersections = [[0,0]]

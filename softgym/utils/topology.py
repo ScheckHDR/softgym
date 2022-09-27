@@ -1,10 +1,11 @@
+from cgi import test
 from tracemalloc import start
 import numpy as np
 import random
 import matplotlib.pyplot as plt
 from matplotlib.patches import Rectangle as rect
 from copy import deepcopy
-from queue import PriorityQueue
+from queue import PriorityQueue, Queue
 
 INTERSECT_NUM = 0
 CORRESPONDING = 1
@@ -132,21 +133,59 @@ class RopeDisplay:
         direction = 0
         for i in range(len(self.segments)):
             pos,direction = self.segments[i].find_path(self.segments,self.crossings,pos,direction,i == len(self.segments)-1)
-            plt.clf()
-            for j in range(i+1):
-                self.segments[j].plot()
-            plt.axis('square')
-            plt.draw()
-            plt.pause(0.5)
+            # plt.clf()
+            # for j in range(i+1):
+            #     self.segments[j].plot()
+            # plt.axis('square')
+            # plt.draw()
+            # plt.pause(0.5)
 
-        # self.plot()
+        self.plot(1,3)
+
+    def grab_area(self,segment_num:int,left:bool):
+
+        def flood_fill(start,occupancy):
+
+            grid_min = np.min(occupancy)
+            grid_max = np.max(occupancy)
+            q = Queue()
+            q.put(start)
+
+            borders = np.empty([1,2])
+            visited = np.empty([1,2])
+
+            while not q.empty():
+                pos = q.get()
+
+                if np.any(np.all(occupancy == pos,axis=1)):
+                    borders = np.vstack((borders,pos))
+                else:
+                    for offset in [np.array([0.5,0]),np.array([0,0.5]),np.array([-0.5,0]),np.array([0,-0.5])]:
+                        test_pos = np.round(pos + offset,1)
+                        if not np.any(np.all(visited == test_pos,axis=1))\
+                            and np.all(test_pos >= grid_min)\
+                            and np.all(test_pos <= grid_max):
+                            q.put(test_pos)
+                visited = np.vstack((visited,pos))
+            return borders
+
+        if left:
+            test_pos = np.round(self.segments[segment_num].path[1,:] + R_mat(self.segments[segment_num].start_direction) @ np.array([0,0.5]),1)
+        else:
+            test_pos = np.round(self.segments[segment_num].path[1,:] + R_mat(self.segments[segment_num].start_direction) @ np.array([0,-0.5]),1)
+        occupied_points = np.vstack([seg.get_points() for seg in self.segments if seg.path is not None])
+        return flood_fill(test_pos,occupied_points)
 
 
-    def plot(self,pick_segment=-1,cross_segment=-1,place_left=True):
-        
+
+
+    def plot(self,pick_segment=-1,cross_segment=None,place_left=True):
 
         for seg in self.segments:
             seg.plot('r-' if seg.segment_num == pick_segment else 'b-')
+        if cross_segment is not None:
+            area = self.grab_area(cross_segment,place_left)
+            plt.fill(area[:,0],area[:,1])
         plt.axis('square')
         plt.show()
            
@@ -735,7 +774,7 @@ if __name__ == '__main__':
         [ 1, 1, 1, 1,-1,-1, 1,-1,-1, 1,-1,-1],
         [-1, 1, 1,-1, 1, 1, 1, 1,-1, 1, 1,-1]
     ])
-    t = generate_random_topology(7).astype(np.int)
+    # t = generate_random_topology(7).astype(np.int)
     print(t)
     t = RopeTopology(t)
     t.display()

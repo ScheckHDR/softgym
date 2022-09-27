@@ -131,15 +131,15 @@ class RopeDisplay:
         pos= self.crossings[0].pos
         direction = 0
         for i in range(len(self.segments)):
-            pos,direction = self.segments[i].find_path(self.segments,self.crossings,pos,direction)
+            pos,direction = self.segments[i].find_path(self.segments,self.crossings,pos,direction,i == len(self.segments)-1)
             plt.clf()
             for j in range(i+1):
                 self.segments[j].plot()
             plt.axis('square')
             plt.draw()
-            # plt.pause(0.5)
+            plt.pause(0.5)
 
-        self.plot(3)
+        # self.plot()
 
 
     def plot(self,pick_segment=-1,cross_segment=-1,place_left=True):
@@ -235,15 +235,14 @@ class Segment:
 
 
 
-        crossings_moved_flag = False
         for seg in segments[:]:
             if seg.has_point(point) and seg is not self and np.any(point != seg.end_crossing.pos) and np.any(point != seg.start_crossing.pos):
                 if seg.modify_path(point,direction,segments,crossings,self):
-                    crossings_moved_flag = True
                     for c in crossings:
-                        c.move(seg.path[-1,:],direction)
+                        c.move(point,direction)
+                    return True
 
-        return crossings_moved_flag
+        return False
 
 
 
@@ -257,20 +256,10 @@ class Segment:
                     return True
             return False
 
-        dir = np.round(direction/np.pi*2) % 4
-
-        if dir == 0:
-            offset = np.array([1,0])
-        elif dir == 1:
-            offset = np.array([0,1])
-        elif dir == 2:
-            offset = np.array([1,0])
-        elif dir == 3:
-            offset = np.array([0,1])
-
-        idx = 0
+        forward_point = np.round(point + R_mat(direction) @ np.array([1,0])).reshape([1,2])
+        idx = 1
         prev_corner_idx = 0
-        while idx <self.path.shape[0]-1:
+        while idx < self.path.shape[0]-1:
             cross_prod = ((self.path[idx,0] - self.path[idx-1,0])*(self.path[idx+1,1] - self.path[idx-1,1]) - (self.path[idx,1]-self.path[idx-1,1])*(self.path[idx+1,0]-self.path[idx-1,0]))
 
             if abs(cross_prod) < 1e-3 and idx < self.path.shape[0] - 2:
@@ -278,38 +267,73 @@ class Segment:
             else:
                 if idx >= self.path.shape[0] - 2:
                     idx = self.path.shape[0]-1
-                if np.any(np.all(self.path[prev_corner_idx:idx+1,:] == point,axis=1)):
+
+
+                cross_prod = ((self.path[idx,0] - self.path[idx-1,0])*(forward_point[0,1] - self.path[idx-1,1]) - (self.path[idx,1]-self.path[idx-1,1])*(forward_point[0,0]-self.path[idx-1,0]))
+
+                if np.any(np.all(self.path[prev_corner_idx:idx+1,:] == point,axis=1)) and abs(cross_prod) > 1e-3:
                     offset = np.round(np.array([0,0]) + R_mat(direction) @ np.array([1,0]),1)
+                    prev_corner_pos = deepcopy(self.path[prev_corner_idx,:])
+                    corner_pos = deepcopy(self.path[idx,:])
                     self.path[prev_corner_idx:idx+1] += offset
 
-                    for i in range(prev_corner_idx,idx+1):
-                        if collides(self.path[i,:].reshape([1,2])):
-                            self.handle_collision(self.path[i,:].reshape([1,2]),direction,segments,crossings)
-                            break # once lines have been moved once, all other points should avoid collision.
+                    # get rid of any left extra lines
+                    corners = np.where(np.all(self.path == self.path[idx,:],axis=1))[0]
+                    if len(corners) > 1:
+                        self.path = np.delete(self.path,range(corners[0],corners[1]),axis=0)
+                        idx -= corners[1]-corners[0]
+
+                    corners = np.where(np.all(self.path == self.path[prev_corner_idx,:],axis=1))[0]
+                    if len(corners) > 1:
+                        self.path = np.delete(self.path,range(corners[0],corners[1]),axis=0)
+                        idx -= corners[1]-corners[0]
+
+                    i = 0
+                    while i < self.path.shape[0] - 1:
+                        diff = self.path[i+1,:] - self.path[i,:]
+                        if np.any(abs(diff) > 0.75):
+                            self.path = np.insert(self.path,i+1,np.round(self.path[i,:] + diff/np.linalg.norm(diff) * 0.5,1),axis=0)
+                        i += 1
+
+                    if idx < self.path.shape[0] - 1:
+                        for i in range(prev_corner_idx,idx+1):
+                            if collides(self.path[i,:].reshape([1,2])):
+                                self.handle_collision(self.path[i,:].reshape([1,2]),direction,segments,crossings)
+                                break # once lines have been moved once, all other points should avoid collision.
                 
                 prev_corner_idx = idx
 
             idx += 1
 
+        # # check if last segment needs to move
+        # if np.any(np.all(self.path[prev_corner_idx:,:] == point,axis=1)):
+        #     prev_corner_pos = deepcopy(self.path[prev_corner_idx,:])
+        #     self.path[prev_corner_idx:idx+1] += offset
+        #     if np.any(np.all(self.path == prev_corner_pos,axis=1)):
+        #         # have some double up, remove it
+        #         self.path = np.delete(self.path,[prev_corner_idx,prev_corner_idx+1],axis=0)
+        #     else:
+        #         # jagged corner, fix be reinserting corner
+        #         self.path = np.insert(self.path,prev_corner_idx-1,prev_corner_pos,axis=0)
 
 
-        idx = 0
-        while idx < self.path.shape[0] - 1:
-            diff = self.path[idx+1,:] - self.path[idx,:]
-            if np.any(abs(diff) > 0.75):
-                self.path = np.insert(self.path,idx+1,np.round(self.path[idx,:] + diff/np.linalg.norm(diff) * 0.5,1),axis=0)
-            idx += 1
+        # idx = 0
+        # while idx < self.path.shape[0] - 1:
+        #     diff = self.path[idx+1,:] - self.path[idx,:]
+        #     if np.any(abs(diff) > 0.75):
+        #         self.path = np.insert(self.path,idx+1,np.round(self.path[idx,:] + diff/np.linalg.norm(diff) * 0.5,1),axis=0)
+        #     idx += 1
 
         if np.any(self.start_crossing.pos != self.path[0,:]):
-            self.start_crossing.pos = self.path[0,:]
+            # self.start_crossing.pos = self.path[0,:]
             return True        
         if np.any(self.end_crossing.pos != self.path[-1,:]):
-            self.end_crossing.pos = self.path[-1,:]
+            # self.end_crossing.pos = self.path[-1,:]
             return True
         return False
 
 
-    def find_path(self,segments,crossings,pos,direction = 0):
+    def find_path(self,segments,crossings,pos,direction = 0,is_last:bool = False):
         
         R = R_mat(direction)
         def can_turn() -> bool:
@@ -353,8 +377,9 @@ class Segment:
             raise Exception
 
         if self.end_crossing.pos is None:
-            pos = step(pos,direction)
-            self.path = np.vstack([self.path,pos])
+            if not is_last: # last segment will be short
+                pos = step(pos,direction)
+                self.path = np.vstack([self.path,pos])
             pos = step(pos,direction)
             if collides(pos):
                 self.handle_collision(pos,direction,segments,crossings)
@@ -362,90 +387,95 @@ class Segment:
             self.path = np.vstack((self.path,pos))
             return pos,direction
 
-        # initialise with one forward movement. Avoids turning on top of a crossing.            
-
-        pos = step(pos,direction)
-        # self.path = np.vstack((self.path,pos))
-        self.start_direction = direction
 
 
 
         while True:
+            # initialise with one forward movement. Avoids turning on top of a crossing.            
+            pos = step(pos,direction)
+            # self.path = np.vstack((self.path,pos))
+            self.start_direction = direction
+
             occupied_points = np.vstack([seg.get_points() for seg in segments if seg.path is not None])
-            path = find_grid_path(pos,self.end_crossing.pos,occupied_points,not self.left)
+            path = find_grid_path(pos,self.end_crossing,occupied_points,not self.left,min(self.start_crossing.numbers) < min(self.end_crossing.numbers))
             if path is None:
                 raise InvalidTopology("Could not verify topology is valid.")
-            self.path = np.vstack((self.path,*path))
+            path = np.vstack((self.path,*path))
         
             # correct the path
             prev_corner_idx = 0
             idx = 1
             first_corner = True
-            while idx <self.path.shape[0]-1:
+            while idx < path.shape[0]-1:
                 # 
-                cross_prod = ((self.path[idx,0] - self.path[idx-1,0])*(self.path[idx+1,1] - self.path[idx-1,1]) - (self.path[idx,1]-self.path[idx-1,1])*(self.path[idx+1,0]-self.path[idx-1,0]))
+                cross_prod = ((path[idx,0] - path[idx-1,0])*(path[idx+1,1] - path[idx-1,1]) - (path[idx,1]-path[idx-1,1])*(path[idx+1,0]-path[idx-1,0]))
 
                 if abs(cross_prod) < 1e-3:
                     pass 
                 else:
                     # corner found, if it is on the half grid, move last leg over, away from next leg.
-                    if np.any(self.path[idx,:] % 1 > 1e-3) and not first_corner:
+                    if np.any(path[idx,:] % 1 > 1e-3) and not first_corner:
 
                         # Test that it can be moved back first.
                         offset = step(np.array([0,0]),direction + np.pi)
-                        corner_pos = deepcopy(self.path[idx,:])
-                        prev_corner_pos = deepcopy(self.path[prev_corner_idx,:])
-                        test = self.path[prev_corner_idx:idx+1] + offset
+                        corner_pos = deepcopy(path[idx,:])
+                        prev_corner_pos = deepcopy(path[prev_corner_idx,:])
+                        test = path[prev_corner_idx:idx+1] + offset
 
                         for test_ind in range(len(test)):
                             if collides(test[test_ind,:]):
                                 # can't move backwards, so move forwards instead
 
                                 offset = step(np.array([0,0]),direction)
-                                corner_pos = deepcopy(self.path[idx,:])
-                                prev_corner_pos = deepcopy(self.path[prev_corner_idx,:])
-                                self.path[prev_corner_idx:idx+1] += offset
+                                corner_pos = deepcopy(path[idx,:])
+                                prev_corner_pos = deepcopy(path[prev_corner_idx,:])
+                                path[prev_corner_idx:idx+1] += offset
 
-                                if np.any(self.path[idx,:] != self.path[idx+1,:]):
-                                    self.path = np.insert(self.path,idx+1,corner_pos,axis=0)
+                                if np.any(path[idx,:] != path[idx+1,:]):
+                                    path = np.insert(path,idx+1,corner_pos,axis=0)
 
-                                self.path = np.insert(self.path,prev_corner_idx,prev_corner_pos,axis=0)
+                                path = np.insert(path,prev_corner_idx,prev_corner_pos,axis=0)
                                 idx += 1 # account for increasing the size of the array we are operating on
 
                                 for i in range(prev_corner_idx,idx+1):
-                                    if collides(self.path[i,:]):
-                                        if self.handle_collision(self.path[i,:],direction,segments,crossings):
-                                            for seg in segments[:self.segment_num]:
+                                    if collides(path[i,:]):
+                                        if self.handle_collision(path[i,:],direction,segments,crossings):
+                                            for seg in segments[:self.segment_num+1]:
                                                 seg.path = None
                                             pos = segments[0].start_crossing.pos
                                             direction = 0
                                             for seg in segments[:self.segment_num]:
                                                 pos,direction = seg.find_path(segments,crossings,pos,direction)
+                                            path = np.zeros((idx+1,2)) # stop processing this one further. Should reset and try again.
                                         break # once lines have been moved once, all other points should avoid collision.
 
                                 break
                         else:
                             # can move the corner backwards
-                            self.path[prev_corner_idx:idx+1] = test
-                            self.path = np.insert(self.path,idx+1,corner_pos,axis=0) # refill the new whole
-                            self.path = np.delete(self.path,prev_corner_idx-1,axis=0) # remove the duplicate
+                            path[prev_corner_idx:idx+1] = test
+                            path = np.insert(path,idx+1,corner_pos,axis=0) # refill the new whole
+                            path = np.delete(path,prev_corner_idx-1,axis=0) # remove the duplicate
 
                             idx -= 1 # account for changing the size of the array we are operating on
 
 
-                        if np.any(self.path[-1,:] != self.end_crossing.pos):
-                            self.path = self.path[0,:]
+                        if np.any(path[-1,:] != self.end_crossing.pos):
+                            self.path = pos.reshape([1,2])
                             break # end moved, so need to adjust plan.
                     first_corner = False
                     prev_corner_idx = idx
-                    direction = np.arctan2(self.path[idx,1] - self.path[idx-1,1],self.path[idx,0] - self.path[idx-1,0])
+                    direction = np.arctan2(path[idx,1] - path[idx-1,1],path[idx,0] - path[idx-1,0])
 
 
                 idx += 1
             else:
+                if collides(self.path[-1,:]):
+                    # need to check collision of end_crossing in the event of having to redraw
+                    self.handle_collision(path[-1,:],direction,segments,crossings)
                 break
-        direction = np.arctan2(self.path[idx,1] - self.path[idx-1,1],self.path[idx,0] - self.path[idx-1,0])
-        pos = self.path[-1,:]
+        direction = np.arctan2(path[idx,1] - path[idx-1,1],path[idx,0] - path[idx-1,0])
+        pos = path[-1,:]
+        self.path = path
 
 
 
@@ -464,12 +494,12 @@ class Segment:
 class InvalidTopology(Exception):
     pass
 
-def find_grid_path(start,end,occupancy,come_from_left:bool):
+def find_grid_path(start,end_crossing,occupancy,come_from_left:bool,starts_crossing:bool):
     start = start.reshape([1,2])
-    end = end.reshape([1,2])
+    end = end_crossing.pos.reshape([1,2])
 
-    grid_max = np.max(occupancy) + np.array([1,1])
-    grid_min = np.min(occupancy) - np.array([1,1])
+    grid_max = np.max(np.vstack((occupancy,end_crossing.pos))) + np.array([1,1])
+    grid_min = np.min(np.vstack((occupancy,end_crossing.pos))) - np.array([1,1])
     
 
     class Node:
@@ -503,7 +533,7 @@ def find_grid_path(start,end,occupancy,come_from_left:bool):
 
             if np.all(test_pos == end):
                 cross_prod = ((end[0,0] - start[0,0])*(current.value[0,1] - start[0,1]) - (end[0,1]-start[0,1])*(current.value[0,0]-start[0,0]))
-                if abs(cross_prod) > 1e-3 and (cross_prod > 0) == come_from_left: # ensure the path approaches from the correct side.
+                if (abs(cross_prod) < 1e-3 and starts_crossing) or (abs(cross_prod) > 1e-3 and (cross_prod > 0) == come_from_left): # ensure the path approaches from the correct side.
                     final_node = test
                     break
             elif not np.any(np.all(occupancy == test.value,axis=1))\
@@ -698,14 +728,14 @@ def reduce_representation(rep_large,indices):
 
 if __name__ == '__main__':
     # For quick testing.
-    random.seed(5)
+    random.seed(4)
     t = np.array([
         [ 0, 1, 2, 3, 4, 5, 6, 7, 8, 9,10,11],
         [11, 4, 5, 8, 1, 2, 7, 6, 3,10, 9, 0],
         [ 1, 1, 1, 1,-1,-1, 1,-1,-1, 1,-1,-1],
         [-1, 1, 1,-1, 1, 1, 1, 1,-1, 1, 1,-1]
     ])
-    # t = generate_random_topology(5).astype(np.int)
+    t = generate_random_topology(7).astype(np.int)
     print(t)
     t = RopeTopology(t)
     t.display()

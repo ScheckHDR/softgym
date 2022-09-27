@@ -75,9 +75,12 @@ class RopeTopology:
     def __str__(self):
         return f'{self._topology}'
 
-    def display(self):
+    def display(self,ax=None,pick_segment=-1,cross_segment=None,place_left=None):
         if not self._has_display:
             self.create_display()
+        
+        ax = ax or plt.gca()
+        self._display.plot(ax,pick_segment,cross_segment,place_left)
 
 
     def create_display(self):
@@ -103,7 +106,7 @@ class RopeDisplay:
 
         for segment_num in topology.list_segments():
 
-            new_seg = Segment(segment_num,prev_over,topology.is_upper(segment_num),topology.sign(segment_num))
+            new_seg = Segment(segment_num,prev_over,topology.is_upper(segment_num),topology.sign(segment_num) > 0 and topology.is_upper(segment_num))
             prev_crossing.attach_segment(new_seg,incoming=False,is_start=len(self.segments) == 0)
 
             if topology.corresponding(segment_num) > segment_num:
@@ -135,12 +138,13 @@ class RopeDisplay:
             pos,direction = self.segments[i].find_path(self.segments,self.crossings,pos,direction,i == len(self.segments)-1)
             # plt.clf()
             # for j in range(i+1):
-            #     self.segments[j].plot()
+            #     self.segments[j].plot(plt.gca())
             # plt.axis('square')
             # plt.draw()
             # plt.pause(0.5)
 
-        self.plot(1,3)
+        # self.plot(plt.gca())
+        # plt.show()
 
     def grab_area(self,segment_num:int,left:bool):
 
@@ -179,15 +183,16 @@ class RopeDisplay:
 
 
 
-    def plot(self,pick_segment=-1,cross_segment=None,place_left=True):
-
+    def plot(self,ax,pick_segment=-1,cross_segment=None,place_left=None):
+        if not isinstance(pick_segment,list):
+            pick_segment = [pick_segment]
+        ax = ax or plt.gca()
         for seg in self.segments:
-            seg.plot('r-' if seg.segment_num == pick_segment else 'b-')
+            seg.plot(ax,'r-' if seg.segment_num in pick_segment else 'b-')
         if cross_segment is not None:
             area = self.grab_area(cross_segment,place_left)
-            plt.fill(area[:,0],area[:,1])
-        plt.axis('square')
-        plt.show()
+            ax.fill(area[:,0],area[:,1])
+        ax.axis('square')
            
 
 class Crossing:
@@ -212,9 +217,9 @@ class Crossing:
                 self.under_in = segment
         else:       
 
-            if self.over_in is not None or is_start:
+            if (self.over_out is None and self.over_in is not None) or is_start:
                 self.over_out = segment
-            elif self.under_in is not None:
+            elif self.under_out is None and self.under_in is not None:
                 self.under_out = segment
             else:
                 raise Exception('Out segment without an in segment')
@@ -312,20 +317,18 @@ class Segment:
 
                 if np.any(np.all(self.path[prev_corner_idx:idx+1,:] == point,axis=1)) and abs(cross_prod) > 1e-3:
                     offset = np.round(np.array([0,0]) + R_mat(direction) @ np.array([1,0]),1)
-                    prev_corner_pos = deepcopy(self.path[prev_corner_idx,:])
-                    corner_pos = deepcopy(self.path[idx,:])
                     self.path[prev_corner_idx:idx+1] += offset
 
-                    # get rid of any left extra lines
+                    # get rid of any extra lines
                     corners = np.where(np.all(self.path == self.path[idx,:],axis=1))[0]
                     if len(corners) > 1:
                         self.path = np.delete(self.path,range(corners[0],corners[1]),axis=0)
-                        idx -= corners[1]-corners[0]
+                        idx -= corners[1]-corners[0] - 1
 
                     corners = np.where(np.all(self.path == self.path[prev_corner_idx,:],axis=1))[0]
                     if len(corners) > 1:
                         self.path = np.delete(self.path,range(corners[0],corners[1]),axis=0)
-                        idx -= corners[1]-corners[0]
+                        idx -= corners[1]-corners[0] - 1
 
                     i = 0
                     while i < self.path.shape[0] - 1:
@@ -436,7 +439,7 @@ class Segment:
             self.start_direction = direction
 
             occupied_points = np.vstack([seg.get_points() for seg in segments if seg.path is not None])
-            path = find_grid_path(pos,self.end_crossing,occupied_points,not self.left,min(self.start_crossing.numbers) < min(self.end_crossing.numbers))
+            path = find_grid_path(pos,self,occupied_points,self.left)
             if path is None:
                 raise InvalidTopology("Could not verify topology is valid.")
             path = np.vstack((self.path,*path))
@@ -520,26 +523,45 @@ class Segment:
 
         return pos,direction
 
-    def plot(self,*line_args,**line_kwargs):
+    def plot(self,ax,*line_args,**line_kwargs):
         full = deepcopy(self.path)
+        ax = ax or plt.gca()
 
         if not self.starts_over:
             full[0,:] = full[0,:] + (full[1,:] - full[0,:]) * line_kwargs.get('removal_amount',0.2)
         if not self.ends_over:
             full[-1,:] = full[-1,:] + (full[-2,:] - full[-1,:]) * line_kwargs.get('removal_amount',0.2)
 
-        plt.plot(full[:,0],full[:,1], *line_args, **line_kwargs)    
+        ax.plot(full[:,0],full[:,1], *line_args, **line_kwargs)    
  
 class InvalidTopology(Exception):
     pass
 
-def find_grid_path(start,end_crossing,occupancy,come_from_left:bool,starts_crossing:bool):
+def find_grid_path(start,segment,occupancy,come_from_left:bool):
+    end_crossing = segment.end_crossing
     start = start.reshape([1,2])
     end = end_crossing.pos.reshape([1,2])
 
     grid_max = np.max(np.vstack((occupancy,end_crossing.pos))) + np.array([1,1])
     grid_min = np.min(np.vstack((occupancy,end_crossing.pos))) - np.array([1,1])
     
+    # come_from_left = not come_from_left
+    
+    # get a reference point to use for determining if the path enters the crossing from the right side.
+    if end_crossing.over_in == segment:
+        ref_out_segment = end_crossing.under_out
+    elif end_crossing.under_in == segment:
+        ref_out_segment = end_crossing.over_out
+
+    if ref_out_segment.path is None:
+        starts_crossing = True
+        ref_position = start # point won't actually be useful, but needs value to avoid errors.
+    else:
+        starts_crossing = False
+        if ref_out_segment == segment:
+            ref_position = start
+        else:
+            ref_position = ref_out_segment.path[1,:].reshape([1,2])
 
     class Node:
         def __init__(self,value,parent,priority):
@@ -571,7 +593,7 @@ def find_grid_path(start,end_crossing,occupancy,come_from_left:bool,starts_cross
 
 
             if np.all(test_pos == end):
-                cross_prod = ((end[0,0] - start[0,0])*(current.value[0,1] - start[0,1]) - (end[0,1]-start[0,1])*(current.value[0,0]-start[0,0]))
+                cross_prod = ((ref_position[0,0] - end[0,0])*(current.value[0,1] - end[0,1]) - (ref_position[0,1]-end[0,1])*(current.value[0,0]-end[0,0]))
                 if (abs(cross_prod) < 1e-3 and starts_crossing) or (abs(cross_prod) > 1e-3 and (cross_prod > 0) == come_from_left): # ensure the path approaches from the correct side.
                     final_node = test
                     break
@@ -626,8 +648,25 @@ def get_topological_representation(positions):
     return topo.astype(int)
 
 
-def add_R1(sign,ind):
-    pass
+def add_R1(topology,ind,sign):
+    T = deepcopy(topology._topology)
+
+    N = np.array([
+        [ind,ind+1],
+        [ind+1,ind],
+        [sign*-1,sign],
+        [sign,sign]
+    ])
+
+    T[np.where(T[:2,:] >= ind)] += 2
+
+    return RopeTopology(np.insert(T,[ind,ind],N,axis=1)), [ind,ind+1]
+
+
+def add_C(topology,index,sign):
+    topology = topology._topology
+
+
 
 
 def remove_R1(topo,ind):
@@ -767,16 +806,22 @@ def reduce_representation(rep_large,indices):
 
 if __name__ == '__main__':
     # For quick testing.
-    random.seed(4)
+    random.seed(20)
     t = np.array([
         [ 0, 1, 2, 3, 4, 5, 6, 7, 8, 9,10,11],
         [11, 4, 5, 8, 1, 2, 7, 6, 3,10, 9, 0],
         [ 1, 1, 1, 1,-1,-1, 1,-1,-1, 1,-1,-1],
         [-1, 1, 1,-1, 1, 1, 1, 1,-1, 1, 1,-1]
     ])
-    # t = generate_random_topology(7).astype(np.int)
-    print(t)
-    t = RopeTopology(t)
-    t.display()
+    
+    while True:
+        try:
+            t = generate_random_topology(3).astype(np.int)
+            print(t)
+            t = RopeTopology(t)
+            t.display()
+        except InvalidTopology:
+            continue
+        break
 
 

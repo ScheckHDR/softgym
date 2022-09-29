@@ -382,7 +382,7 @@ class Segment:
 
 
     def find_path(self,segments,crossings,pos,direction = 0,is_last:bool = False):
-        
+        self.start_direction = direction
         R = R_mat(direction)
         def can_turn() -> bool:
             nonlocal self
@@ -694,31 +694,65 @@ def add_R1(topology,ind,over,sign):
     N = np.array([
         [ind,ind+1],
         [ind+1,ind],
-        [over,sign*-1],
+        [over,over*-1],
         [sign,sign]
     ])
 
     T[np.where(T[:2,:] >= ind)] += 2
 
+    for i in range(N.shape[1]):      
+        T = np.insert(T,N[0,i],N[:,i],axis=1)
+
     related_segments = [ind,ind+1]
     if ind != topology.size():
         related_segments.append(ind+2)
-
-    return RopeTopology(np.insert(T,[ind,ind],N,axis=1)), related_segments
-
-
-def add_C(topology,index,sign):
-    topology = topology._topology
+    
 
 
+    return RopeTopology(T), related_segments
 
 
-def remove_R1(topo,ind):
-    if topo[CORRESPONDING,ind] == ind+1 and topo[CORRESPONDING,ind+1] == ind:
-        new_topo = np.delete(topo,[ind,ind+1],1)
-        new_topo[np.where(new_topo[INTERSECT_NUM:CORRESPONDING+1,:] > ind+1)] -= 2
+def add_C(topology,over_ind,under_ind,sign):
+    assert over_ind in [0,topology.size()] or under_ind in [0,topology.size()], f'C moves require at least one of the affected indices to be the end of the rope.'
+    
+        
+    T = deepcopy(topology._topology)
 
-        return new_topo
+    if over_ind > under_ind:
+        N = np.array([
+            [under_ind,over_ind+1],
+            [over_ind+1,under_ind],
+            [-1,1],
+            [sign,sign]
+        ])
+        over_segs = [over_ind+1,over_ind+2]
+    elif under_ind > over_ind:
+        N = np.array([
+            [over_ind,under_ind+1],
+            [under_ind+1,over_ind],
+            [1,-1],
+            [sign,sign]
+        ])
+        over_segs = [over_ind,over_ind+1]
+
+    T[np.where(T[:2,:] >= max(over_ind,under_ind))] += 1
+    T[np.where(T[:2,:] >= min(over_ind,under_ind))] += 1
+
+    for i in range(N.shape[1]):      
+        T = np.insert(T,N[0,i],N[:,i],axis=1)
+
+    return RopeTopology(T), over_segs
+
+
+def remove_R1(topology:RopeTopology,ind):
+    if topology.corresponding(ind) == ind -1:
+        T = deepcopy(topology._topology)
+
+        T = np.delete(T,[ind-1,ind],axis=1)
+        T[np.where(T[:2,:] > ind)] -= 2
+        T[np.where(T[INTERSECT_NUM:CORRESPONDING+1,:] > ind+1)] -= 2
+
+        return RopeTopology(T)
     return None
 
 def remove_R2(topo,ind):

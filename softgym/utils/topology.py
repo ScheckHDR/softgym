@@ -711,6 +711,9 @@ def add_R1(topology,ind,over,sign):
 
     return RopeTopology(T), related_segments
 
+def add_R2(topology:RopeTopology,over_ind:int,under_ind:int,sign,over_first:bool=False):
+    T = deepcopy(topology._topology)
+    
 
 def add_C(topology,over_ind,under_ind,sign):
     assert over_ind in [0,topology.size()] or under_ind in [0,topology.size()], f'C moves require at least one of the affected indices to be the end of the rope.'

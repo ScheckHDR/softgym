@@ -253,6 +253,17 @@ class Segment:
             else:
                 idx += 1
 
+    def split(self,over_in:bool,over_out:bool): #TODO
+        path = self.full_path
+        legs = Segment.split_path_into_legs(path)
+
+        if len(legs) == 1:
+            test_pos = np.round(path[path.shape[0]//2,:],1)
+            if np.any(test_pos % 1 != 0):
+                pass
+        else:
+            pass
+
     @staticmethod
     def _repair_path(path):
         # remove any duplicates
@@ -317,21 +328,33 @@ class Crossing:
         self._position:Union[None,np.ndarray] = None
 
     def attach_segment(self,segment:Segment,over:bool,incoming:bool) -> None:
-        num_attached = len(self.attachment_points)
-        if num_attached == 0:
-            if self.is_start:
-                self.attachment_points[(segment,incoming)] = np.array([0.5, 0])    
-            else:
-                self.attachment_points[(segment,incoming)] = np.array([-0.5, 0])
-        elif num_attached == 1:
-            self.attachment_points[(segment,incoming)] = np.array([ 0.5, 0])
-        elif num_attached == 2:
-            self.attachment_points[(segment,incoming)] = np.array([ 0,-0.5]) if self.sign > 0 == over else np.array([0,0.5])
-        elif num_attached == 3:
-            self.attachment_points[(segment,incoming)] = np.array([ 0, 0.5]) if self.sign > 0 == over else np.array([0,-0.5])
-        elif num_attached == 4:
-            raise Exception("too many segments attached.")
+        
+        if not hasattr(self,'over_in_attach'):
 
+            if over:
+                self.over_in_attach = np.array([-0.5,0])
+                self.over_out_attach =np.array([ 0.5,0])
+                self.under_in_attach = np.array([ 0,-0.5]) if self.sign > 0  else np.array([0,0.5])
+                self.under_out_attach = np.array([ 0, 0.5]) if self.sign > 0  else np.array([0,-0.5])
+            else:
+                self.under_in_attach  = np.array([-0.5,0])
+                self.under_out_attach = np.array([ 0.5,0])
+                self.over_in_attach   = np.array([ 0, 0.5]) if self.sign > 0  else np.array([0,-0.5])
+                self.over_out_attach  = np.array([ 0,-0.5]) if self.sign > 0  else np.array([0,0.5])
+
+
+        # elif num_attached == 1:
+        #     self.attachment_points[(segment,incoming)] = np.array([ 0.5, 0])
+        # elif num_attached == 2:
+        #     self.attachment_points[(segment,incoming)] = np.array([ 0,-0.5]) if self.sign > 0 == over else np.array([0,0.5])
+        # elif num_attached == 3:
+        #     self.attachment_points[(segment,incoming)] = np.array([ 0, 0.5]) if self.sign > 0 == over else np.array([0,-0.5])
+        # elif num_attached == 4:
+        #     raise Exception("too many segments attached.")
+
+        if self.is_start:
+            self.over_out = segment
+            return
         if over:
             if incoming:
                 self.over_in = segment
@@ -372,21 +395,35 @@ class Crossing:
             raise Exception
 
     def get_side_segment(self,segment:Segment,left) -> Union[Segment, None]:
-        if segment.start_crossing == self:
-            # tracing segment in reverse direction
-            direction = -self.sign
-        else:
-            direction = self.sign
-        if direction > 0:
-            if segment in [self.under_in,self.under_out]:
-                return self.over_in if left > 0 else self.over_out
-            elif segment in [self.over_in,self.over_out]:
-                return self.under_out if left > 0 else self.under_in
-        elif direction < 0:
-            if segment in [self.under_in,self.under_out]:
-                return self.over_out if left > 0 else self.over_in
-            elif segment in [self.over_in,self.over_out]:
-                return self.under_in if left > 0 else self.under_out
+
+        s = self.sign > 0
+        if segment == self.over_in:
+            c = self.under_out if left == s else self.under_in
+            if c != segment:
+                return c
+        if segment == self.over_out:
+            c = self.under_in if left == s else self.under_out
+            if c != segment:
+                return c
+        if segment == self.under_in:
+            c = self.over_in if left == s else self.over_out
+            if c != segment:
+                return c
+        if segment == self.under_out:
+            c = self.over_out if left == s else self.over_in
+            if c != segment:
+                return c
+
+        # if direction > 0:
+        #     if segment in [self.under_in,self.under_out]:
+        #         return self.over_in if left > 0 else self.over_out
+        #     elif segment in [self.over_in,self.over_out]:
+        #         return self.under_out if left > 0 else self.under_in
+        # elif direction < 0:
+        #     if segment in [self.under_in,self.under_out]:
+        #         return self.over_out if left > 0 else self.over_in
+        #     elif segment in [self.over_in,self.over_out]:
+        #         return self.under_in if left > 0 else self.under_out
             
     def empty_type_on_side(self,seg,is_input:bool,from_left:bool) -> bool:
         if seg == self.under_in:
@@ -413,12 +450,28 @@ class Crossing:
             raise Exception
 
     def get_attachment_point(self,segment,is_input:bool):
+        p = None
+        if is_input:
+            if segment == self.over_in:
+                p = self.over_in_attach
+            elif segment == self.under_in:
+                p = self.under_in_attach
+        else:
+            if segment == self.over_out:
+                p = self.over_out_attach
+            elif segment == self.under_out:
+                p = self.under_out_attach
+        if p is None:
+            raise ValueError("Segment is not attached to crossing.")
+        
         R = np.array([
             [np.cos(self.rotation),-np.sin(self.rotation)],
             [np.sin(self.rotation), np.cos(self.rotation)]
         ])
-        if (segment,is_input) in self.attachment_points:
-            return np.round((self.position + R @ self.attachment_points[(segment,is_input)]).reshape([1,2]),1)
+        return np.round((self.position + R @ p).reshape([1,2]),1)
+
+    def replace_segment(self,old,new):
+        pass
 
     def move_relative(self,delta):
         self._position = np.round(self._position + delta.reshape([1,2]),1)
@@ -445,7 +498,8 @@ class Crossing:
         return self._rotation
     @property
     def attached_segments(self):
-        return [seg[0] for seg in self.attachment_points]    
+        return [seg for seg in [self.over_in,self.over_out,self.under_in,self.under_out] if seg is not None]
+        # return [seg[0] for seg in self.attachment_points]    
 
 class RopeTopology:
     def __init__(self,topo_np):
@@ -486,16 +540,17 @@ class RopeTopology:
                         if next_seg is not None and next_seg.segment_num == 0:
                             #ignore end crossing
                             prev_seg = next_seg
-                            next_seg = test_crossing.get_connected_segment(prev_seg) #Shouldn't be any on 1 side of the crossing.
-                            inputs += test_crossing.empty_type_on_side(prev_seg,True,is_left)
-                            outputs += test_crossing.empty_type_on_side(prev_seg,False,is_left)
+                            continue
                         if next_seg == None:
                             inputs += test_crossing.empty_type_on_side(prev_seg,True,is_left)
                             outputs += test_crossing.empty_type_on_side(prev_seg,False,is_left)
                             next_seg = test_crossing.get_connected_segment(prev_seg)
+                            if next_seg is None:
+                                # Probably fucking R1
+                                next_seg = test_crossing.get_side_segment(prev_seg,not is_left)
                             if next_seg.segment_num == 0:
                                 prev_seg = next_seg
-                                next_seg = test_crossing.get_connected_segment(prev_seg)
+                                next_seg = test_crossing.get_side_segment(prev_seg,is_left)
 
                         test_crossing = next_seg.get_other_crossing(test_crossing)
                         prev_seg = next_seg                       
@@ -606,6 +661,24 @@ class RopeTopology:
         for segment in self.segments:
             segment.plot(ax,*args,**kwargs)
 
+    def add_R1(self,segment_num:int,over:int,sign:int) -> "RopeTopology":
+        assert over in [-1,1],f''
+        assert sign in [-1,1],f''
+        # Adds an R1 move to the desired segment. If over, first crossing will be over, and then under. 
+        T = deepcopy(self.rep)
+
+        N = np.array([
+            [segment_num,segment_num+1],
+            [segment_num+1,segment_num],
+            [over,over*-1],
+            [sign,sign]
+        ])
+        T[np.where(T[:2,:] >= segment_num)] += 2
+
+        r1_rep = np.hstack([T,N])
+        return RopeTopology(r1_rep[:,r1_rep[0,:].argsort()])
+
+
     def size(self):
         return self._topology.shape[1]
     def corresponding(self,seg_num):
@@ -688,11 +761,20 @@ if __name__ == '__main__':
     #     [-1, 1, 1,-1, 1, 1, 1, 1,-1, 1, 1,-1]
     # ]) invalid
     
-    print(t)
+    # print(t)
+    f, (ax1,ax2) = plt.subplots(1,2)
 
     R = RopeTopology(t)
     R.construct_geometry()
-    R.plot()
+    R.plot(ax1)
+
+    test_R = R.add_R1(0,1,1)
+    test_R.construct_geometry()
+    test_R.plot(ax2)
+
     plt.show()
+
+
+
 
 

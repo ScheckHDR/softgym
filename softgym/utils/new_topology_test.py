@@ -724,12 +724,25 @@ class RopeTopology:
         r2_rep = np.hstack([T,N])
 
         return RopeTopology(r2_rep[:,r2_rep[0,:].argsort()]), over_segs
+    def remove_C(self,segment_num:int) -> Tuple["RopeTopology",List[int]]:
+        assert segment_num in [0,self.size], f'segment_num must relate to the ends of the rope'
 
+        T = deepcopy(self.rep)
+        if segment_num == 0:
+            a,b = segment_num, self.corresponding(segment_num)
+        elif segment_num == self.size:
+            a,b = self.corresponding(segment_num-1),segment_num-1 #TODO check this is correct.
+        T = np.delete(T,b,axis=1)
+        T = np.delete(T,a,axis=1)
+        T[np.where(T[:2,:] >= b)] -= 1
+        T[np.where(T[:2,:] >= a)] -= 1
+
+        return RopeTopology(T)
     @staticmethod
     def quick_check(topo_np):
-        # for col in topo_np.T:
-        #     if topo_np[1,col[1]] != col[0] or topo_np[2,col[1]] == col[2] or topo_np[3,col[1]] != col[3]:
-        #         return False
+        for col in topo_np.T:
+            if topo_np[1,col[1]] != col[0] or topo_np[2,col[1]] == col[2] or topo_np[3,col[1]] != col[3]:
+                return False
         return True
 
 
@@ -832,7 +845,7 @@ def find_topological_path(start:RopeTopology,end:RopeTopology) -> List[RopeTopol
     frontier.put(RopeTopologyNode(start))
     visited = []
 
-    def parse_C(current):
+    def parse_add_C(current):
         for over_seg in range(current.value.size+1):
             for under_seg in range(current.value.size+1):
                 for sign in [-1,1]:
@@ -842,16 +855,35 @@ def find_topological_path(start:RopeTopology,end:RopeTopology) -> List[RopeTopol
                                 action_args = [over_seg,under_seg,sign,under_first]
                                 test, after_action_segs = current.value.add_C(*action_args)
                                 if test == end:
-                                    return RopeTopologyNode(end,parent=current,action = ["R1",action_args,after_action_segs])
-                                if test not in visited:
-                                    frontier.put(RopeTopologyNode(test,parent=current,action = ["R1",action_args,after_action_segs]))
+                                    return RopeTopologyNode(end,parent=current,action = ["+C",action_args,after_action_segs])
+                                new_node = RopeTopologyNode(test,parent=current,action = ["+C",action_args,after_action_segs])
+                                if test not in visited and new_node not in frontier.queue:
+                                    frontier.put(new_node)
                             except InvalidTopology:
                                 pass
+
+    def parse_remove_C(current):
+        if current.value.size == 0:
+            return
+        for seg in [0,current.value.size]:
+            try:
+                test = current.value.remove_C(seg)
+                if test == end:
+                    return RopeTopologyNode(end,parent=current,action=["-C",[seg],[]])
+                new_node = RopeTopologyNode(test,parent=current,action=["-C",[seg],[]])
+                if test not in visited and new_node not in frontier.queue:
+                    frontier.put(new_node)
+            except InvalidTopology:
+                pass
+
 
     while not frontier.empty():
         current = frontier.get()
 
-        finish = parse_C(current)
+        finish = parse_add_C(current)
+        if finish is not None:
+            break
+        finish = parse_remove_C(current)
         if finish is not None:
             break
         visited.append(current.value)
@@ -867,12 +899,19 @@ def find_topological_path(start:RopeTopology,end:RopeTopology) -> List[RopeTopol
 
 
 if __name__ == '__main__':
+    # t = np.array([
+    #     [ 0, 1, 2, 3, 4, 5],
+    #     [ 2, 3, 0, 1, 5, 4],
+    #     [ 1, 1,-1,-1, 1,-1],
+    #     [-1, 1,-1, 1, 1, 1]
+    # ])
     t = np.array([
-        [ 0, 1, 2, 3, 4, 5],
-        [ 2, 3, 0, 1, 5, 4],
-        [ 1, 1,-1,-1, 1,-1],
-        [-1, 1,-1, 1, 1, 1]
+        [0,1],
+        [1,0],
+        [-1,1],
+        [1,1]
     ])
+    RopeTopology(t)
     # t = np.array([
     #     [ 0, 1, 2, 3, 4, 5, 6, 7, 8, 9,10,11],
     #     [11, 4, 5, 8, 1, 2, 7, 6, 3,10, 9, 0],
@@ -882,38 +921,38 @@ if __name__ == '__main__':
     
     # print(t)
 
-    trivial_knot = RopeTopology(np.empty([4,0],dtype=np.int32))
-    trefoil_knot = RopeTopology(np.array([
-        [ 0, 1, 2, 3, 4, 5],
-        [ 3, 4, 5, 0, 1, 2],
-        [ 1,-1, 1,-1, 1,-1],
-        [-1,-1,-1,-1,-1,-1]
-    ],dtype=np.int32))
+    # trivial_knot = RopeTopology(np.empty([4,0],dtype=np.int32))
+    # trefoil_knot = RopeTopology(np.array([
+    #     [ 0, 1, 2, 3, 4, 5],
+    #     [ 3, 4, 5, 0, 1, 2],
+    #     [ 1,-1, 1,-1, 1,-1],
+    #     [-1,-1,-1,-1,-1,-1]
+    # ],dtype=np.int32))
 
-    topological_path = find_topological_path(trivial_knot,trefoil_knot)
+    # topological_path = find_topological_path(trivial_knot,trefoil_knot)
 
-    for n in topological_path:
-        print(f'rep:{n.value.rep}\naction:{n.action}')
+    # for n in topological_path:
+    #     print(f'rep:{n.value.rep}\naction:{n.action}')
 
-    f, (ax1,ax2) = plt.subplots(1,2)
-    trivial_knot.construct_geometry()
-    trivial_knot.plot(ax1)
-    trefoil_knot.construct_geometry()
-    trefoil_knot.plot(ax2)
+    # f, (ax1,ax2) = plt.subplots(1,2)
+    # trivial_knot.construct_geometry()
+    # trivial_knot.plot(ax1)
+    # trefoil_knot.construct_geometry()
+    # trefoil_knot.plot(ax2)
 
-    plt.pause(2)
+    # plt.pause(2)
 
-    for i in range(1,len(topological_path)):
-        ax1.clear()
-        ax2.clear()
+    # for i in range(1,len(topological_path)):
+    #     ax1.clear()
+    #     ax2.clear()
 
-        type,action,after_segs = topological_path[i].action
-        pick_segs = action[0]
-        topological_path[i-1].value.construct_geometry()
-        topological_path[i-1].value.plot(ax1,pick_segs)
-        topological_path[i].value.construct_geometry()
-        topological_path[i].value.plot(ax2,after_segs)
-        plt.pause(2)
+    #     type,action,after_segs = topological_path[i].action
+    #     pick_segs = action[0]
+    #     topological_path[i-1].value.construct_geometry()
+    #     topological_path[i-1].value.plot(ax1,pick_segs)
+    #     topological_path[i].value.construct_geometry()
+    #     topological_path[i].value.plot(ax2,after_segs)
+    #     plt.pause(2)
 
     # R = RopeTopology(t)
     # R.construct_geometry()

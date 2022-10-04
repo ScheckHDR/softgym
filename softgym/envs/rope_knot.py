@@ -108,7 +108,7 @@ class RopeKnotEnv(RopeNewEnv):
 
         self.workspace =np.array([[-0.35,0.35],[-0.35,0.35]])
         self.goal_configuration = deepcopy(generate_random_topology(self.goal_crossings))
-        print(self.goal_configuration)
+        # print(self.goal_configuration)
               
     def _reset(self):
         
@@ -163,6 +163,9 @@ class RopeKnotEnv(RopeNewEnv):
             return 0
         else:
             return -1
+
+    def get_geoms(self):
+        return np.array(pyflex.get_positions()).reshape([-1, 4])[:, :3]
 
     def get_topological_representation(self):
         particle_pos = np.array(pyflex.get_positions()).reshape([-1, 4])[:, :3]

@@ -10,7 +10,11 @@ from softgym.utils.normalized_env import normalize
 from softgym.utils.trajectories import box_trajectory, curved_trajectory, curved_trajectory
 
 from softgym.utils.new_topology_test import RopeTopology,RopeTopologyNode,find_topological_path
+from softgym.utils.topology import get_topological_representation
 
+import random
+random.seed(9)
+np.random.seed(9)
 trefoil_knot = RopeTopology(np.array([
         [ 0, 1, 2, 3, 4, 5],
         [ 3, 4, 5, 0, 1, 2],
@@ -23,38 +27,42 @@ def main(env_kwargs):
 
     obs = env.reset()
     while True:
-        topo_obs = env.get_topological_representation().astype(np.int32)
-
+        geoms = env.get_geoms()
+        topo_obs = get_topological_representation(geoms).astype(np.int32)
+        print(topo_obs)
         t = RopeTopology(topo_obs)
         plan = find_topological_path(t,trefoil_knot)
-        action = plan[0].action
+        action = plan[1].action
+        print(plan[1].value.rep)
 
-        if action[0] == "R1":
+        if action[0] == "+C":
             if action[1][0] == action[1][1]:
                 segment_idxs = t.find_geometry_indices_matching_seg(action[1][0],obs['cross'])
                 l = len(segment_idxs)
                 if action[1][3]:
                     # under first
-                    place_seg = segment_idxs[l//2:]
-                    pick_seg = segment_idxs[:l//2]
-                else:
-                    
                     pick_seg = segment_idxs[l//2:]
                     place_seg = segment_idxs[:l//2]
+                else:
+                    place_seg = segment_idxs[l//2:]
+                    pick_seg = segment_idxs[:l//2]
+                    
             else:
                 pick_seg = t.find_geometry_indices_matching_seg(action[1][0],obs['cross'])
                 place_seg = t.find_geometry_indices_matching_seg(action[1][1],obs['cross'])
             pick_idx = pick_seg[len(pick_seg)//2]
             place_idx = place_seg[len(place_seg)//2]
 
-            pick_act = pick_idx / t.size
-            place_act = (obs['shape'][:,place_idx] - obs['shape'][:,pick_idx]) * 1
+            pick_act = pick_idx / geoms.shape[0]
+            place_act = (obs['shape'][:,place_idx] - obs['shape'][:,pick_idx]) * 1.2
 
             robot_action = (pick_act,place_act[0],place_act[1])
 
+        elif action[0] == "-C":
+            raise NotImplementedError
         obs,rew,done,info = env.step(robot_action)
 
-        if done:
+        if rew > 1e6:
             break
 
     env.close()

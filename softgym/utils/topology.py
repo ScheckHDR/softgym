@@ -658,7 +658,7 @@ def find_grid_path(start,segment,occupancy,come_from_left:bool):
         
 
 def get_topological_representation(positions):
-    intersections = [[0,0]]
+    intersections = []
     for i in range(positions.shape[0]):
         for j in range (i+2,positions.shape[0]-2):
             if intersect(positions[i],positions[i+1],positions[j],positions[j+1]):
@@ -713,7 +713,7 @@ def add_R1(topology,ind,over,sign):
 
 def add_R2(topology:RopeTopology,over_ind:int,under_ind:int,sign,over_first:bool=False):
     T = deepcopy(topology._topology)
-    
+
 
 def add_C(topology,over_ind,under_ind,sign):
     assert over_ind in [0,topology.size()] or under_ind in [0,topology.size()], f'C moves require at least one of the affected indices to be the end of the rope.'

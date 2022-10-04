@@ -1,6 +1,6 @@
 import numpy as np
 from copy import deepcopy
-from typing import Union
+from typing import Union, List, Tuple
 import matplotlib.pyplot as plt
 from queue import PriorityQueue, Queue
 # from accessify import private
@@ -58,7 +58,7 @@ class Segment:
 
         points = np.vstack([start,self.path,end])
 
-        plt.plot(points[:,0],points[:,1],*args,**kwargs)
+        ax.plot(points[:,0],points[:,1],*args,**kwargs)
 
     def create_geometry(self,occupancy) -> None:
         def step(pos,length,theta):
@@ -283,7 +283,7 @@ class Segment:
         return unique_path
 
     @staticmethod
-    def split_path_into_legs(path) -> list[np.ndarray]:
+    def split_path_into_legs(path) -> List[np.ndarray]:
         def line_test(A,B,P):
             # returns a value that will determine the relation of the test point P to the line AB.
             # return > 0: P is on the left
@@ -382,37 +382,36 @@ class Crossing:
         else:
             raise Exception
 
-    def get_connected_segment(self,segment:Segment) -> Segment:
-        if self.under_in == segment:
-            return self.under_out
-        elif self.over_in == segment:
-            return self.over_out
-        elif self.under_out == segment:
-            return self.under_in
-        elif self.over_out == segment:
-            return self.over_in
+    def get_connected_segment(self,segment:Segment,is_input:bool) -> Segment:
+        if is_input:
+            if self.under_in == segment:
+                return self.under_out
+            elif self.over_in == segment:
+                return self.over_out
         else:
-            raise Exception
+            if self.under_out == segment:
+                return self.under_in
+            elif self.over_out == segment:
+                return self.over_in
+        
+        raise Exception
 
-    def get_side_segment(self,segment:Segment,left) -> Union[Segment, None]:
-
+    def get_side_segment(self,segment:Segment,left:bool,segment_is_input:bool) -> Union[Segment, None]:
+        # returns segment, and if the segment is an output
         s = self.sign > 0
-        if segment == self.over_in:
-            c = self.under_out if left == s else self.under_in
-            if c != segment:
-                return c
-        if segment == self.over_out:
-            c = self.under_in if left == s else self.under_out
-            if c != segment:
-                return c
-        if segment == self.under_in:
-            c = self.over_in if left == s else self.over_out
-            if c != segment:
-                return c
-        if segment == self.under_out:
-            c = self.over_out if left == s else self.over_in
-            if c != segment:
-                return c
+
+        if segment_is_input:
+            if segment == self.over_in:
+                return (self.under_out,True) if left == s else (self.under_in,False)
+            elif segment == self.under_in:
+                return (self.over_in,False) if left == s else (self.over_out,True)
+        else:
+            if segment == self.over_out:
+                return (self.under_in,False) if left == s else (self.under_out,True)
+            elif segment == self.under_out:
+                return (self.over_out,True) if left == s else (self.over_in,False)
+
+        raise Exception
 
         # if direction > 0:
         #     if segment in [self.under_in,self.under_out]:
@@ -483,7 +482,7 @@ class Crossing:
         self._rotation = theta
 
     def __eq__(self,other):
-        if isinstance(other,int) or isinstance(other,float) or isinstance(other,np.int32):
+        if isinstance(other,int) or isinstance(other,float) or isinstance(other,np.int32) or isinstance(other,np.int64):
             return np.any(self._numbers == other)
         elif isinstance(other,Crossing):
             return np.all(self._numbers == other._numbers)
@@ -503,6 +502,8 @@ class Crossing:
 
 class RopeTopology:
     def __init__(self,topo_np):
+        if not RopeTopology.quick_check(topo_np):
+            raise InvalidTopology("Representation failed initial check.")
         self._topology:np.ndarray = topo_np
 
         self.segments:list[Segment] = []
@@ -511,6 +512,7 @@ class RopeTopology:
         prev_crossing = self.crossings[-1]
         prev_over = True #Assume rope went over initial "crossing"
 
+        col = -1 # Needed in case on trivial knot.
         for col in range(topo_np.shape[1]):
             new_segment = Segment(col,prev_over,topo_np[2,col] > 0)
             prev_crossing.attach_segment(new_segment,prev_over>0,False)
@@ -535,25 +537,32 @@ class RopeTopology:
                     prev_seg = new_segment
                     inputs = 0
                     outputs = 0
+                    is_input = True
                     while True:
-                        next_seg = test_crossing.get_side_segment(prev_seg,is_left)
+                        next_seg, was_output = test_crossing.get_side_segment(prev_seg,is_left,is_input)
+
                         if next_seg is not None and next_seg.segment_num == 0:
-                            #ignore end crossing
+                            #ignore end crossing, reverse direction.
                             prev_seg = next_seg
+                            is_input = True
                             continue
                         if next_seg == None:
                             inputs += test_crossing.empty_type_on_side(prev_seg,True,is_left)
                             outputs += test_crossing.empty_type_on_side(prev_seg,False,is_left)
-                            next_seg = test_crossing.get_connected_segment(prev_seg)
+                            next_seg = test_crossing.get_connected_segment(prev_seg,is_input)
+                            was_output = is_input
                             if next_seg is None:
                                 # Probably fucking R1
-                                next_seg = test_crossing.get_side_segment(prev_seg,not is_left)
+                                next_seg,was_output = test_crossing.get_side_segment(prev_seg,not is_left,is_input)
                             if next_seg.segment_num == 0:
                                 prev_seg = next_seg
-                                next_seg = test_crossing.get_side_segment(prev_seg,is_left)
+                                is_input = True
+                                continue
+                                # next_seg = test_crossing.get_side_segment(prev_seg,is_left)
 
                         test_crossing = next_seg.get_other_crossing(test_crossing)
-                        prev_seg = next_seg                       
+                        prev_seg = next_seg    
+                        is_input = was_output                   
 
                         if test_crossing == c:
                             #done full loop
@@ -646,20 +655,22 @@ class RopeTopology:
             else:
                 occupancy = np.vstack([seg.full_path for seg in self.segments if seg != segment and seg.path is not None])
             segment.create_geometry(occupancy)
-            segment.plot()
+            # segment.plot()
             # Check collisions
             if collides(segment.path,occupancy) or any([collides(segment.end_crossing.position,s.path) for s in self.segments]):
                 handle_collisions(segment,self.segments)
                 occupancy = self.crossings[0].position
-                plt.clf()
-                for seg in self.segments:
-                    if seg.path is not None:
-                        seg.plot()
+                # plt.clf()
+                # for seg in self.segments:
+                #     if seg.path is not None:
+                #         seg.plot()
                        
-    def plot(self,ax = None,*args,**kwargs) -> None:
+    def plot(self,ax = None,pick_segs = [],*args,**kwargs) -> None:
+        if isinstance(pick_segs,int):
+            pick_segs = [pick_segs]
         ax = ax or plt.gca()
         for segment in self.segments:
-            segment.plot(ax,*args,**kwargs)
+            segment.plot(ax,'r-' if segment.segment_num in pick_segs else 'b-',*args,**kwargs)
 
     def add_R1(self,segment_num:int,over:int,sign:int) -> "RopeTopology":
         assert over in [-1,1],f''
@@ -678,9 +689,50 @@ class RopeTopology:
         r1_rep = np.hstack([T,N])
         return RopeTopology(r1_rep[:,r1_rep[0,:].argsort()])
 
+    def add_C(self,over_ind:int,under_ind:int,sign:int,under_first:bool) -> Tuple["RopeTopology",List[int]]:
+        assert over_ind in [0,self.size] or under_ind in [0,self.size], f'C moves require at least one of the affected indices to be the end of the rope.'         
+        T = deepcopy(self.rep)
 
-    def size(self):
-        return self._topology.shape[1]
+        if over_ind > under_ind:
+            N = np.array([
+                [under_ind,over_ind+1],
+                [over_ind+1,under_ind],
+                [-1,1],
+                [sign,sign]
+            ])
+            over_segs = [over_ind+1,over_ind+2]
+        elif under_ind > over_ind:
+            N = np.array([
+                [over_ind,under_ind+1],
+                [under_ind+1,over_ind],
+                [1,-1],
+                [sign,sign]
+            ])
+            over_segs = [over_ind,over_ind+1]
+        else:
+            N = np.array([
+                [over_ind,under_ind+1],
+                [under_ind+1,over_ind],
+                [-1,1] if under_first else [1,-1],
+                [sign,sign]
+            ])
+            over_segs = [over_ind,over_ind+1]
+
+        T[np.where(T[:2,:] >= max(over_ind,under_ind))] += 1
+        T[np.where(T[:2,:] >= min(over_ind,under_ind))] += 1
+
+        r2_rep = np.hstack([T,N])
+
+        return RopeTopology(r2_rep[:,r2_rep[0,:].argsort()]), over_segs
+
+    @staticmethod
+    def quick_check(topo_np):
+        for col in topo_np.T:
+            if topo_np[1,col[1]] != col[0] or topo_np[2,col[1]] == col[2] or topo_np[3,col[1]] != col[3]:
+                return False
+        return True
+
+
     def corresponding(self,seg_num):
         return self._topology[1,self._section_index(seg_num)]
     def upper_val(self,seg_num):
@@ -692,6 +744,12 @@ class RopeTopology:
     def _section_index(self,col):
         return np.where(self._topology[0,:] == col)[0][0]
 
+    def __eq__(self,other) -> bool:
+        return np.all(self.rep == other.rep)
+
+    @property
+    def size(self):
+        return self._topology.shape[1]
     @property
     def rep(self):
         return self._topology
@@ -746,6 +804,52 @@ def find_grid_path(start,end,occupancy) -> np.ndarray:
     path.reverse()
     return np.vstack([*path]).reshape([-1,2])
             
+class RopeTopologyNode:
+    def __init__(self,value:RopeTopology,parent:Union[None,RopeTopology]=None,action=None):
+        self.value = value
+        self.parent = parent
+        self.action = action
+    def __eq__(self,other):
+        return self.value == other.value
+def find_topological_path(start:RopeTopology,end:RopeTopology) -> List[RopeTopology]:
+
+    frontier = Queue()
+    frontier.put(RopeTopologyNode(start))
+    visited = []
+
+    def parse_C(current):
+        for over_seg in range(current.value.size+1):
+            for under_seg in range(current.value.size+1):
+                for sign in [-1,1]:
+                    if over_seg in [0,current.value.size] or under_seg in [0,current.value.size]:
+                        for under_first in ([False,True] if over_seg == under_seg else [False]):
+                            try:
+                                action_args = [over_seg,under_seg,sign,under_first]
+                                test, after_action_segs = current.value.add_C(*action_args)
+                                if test == end:
+                                    return RopeTopologyNode(end,parent=current,action = ["R1",action_args,after_action_segs])
+                                if test not in visited:
+                                    frontier.put(RopeTopologyNode(test,parent=current,action = ["R1",action_args,after_action_segs]))
+                            except InvalidTopology:
+                                pass
+
+    while not frontier.empty():
+        current = frontier.get()
+
+        finish = parse_C(current)
+        if finish is not None:
+            break
+        visited.append(current.value)
+    
+    
+    path = []
+    while finish is not None:
+        path.append(finish)
+        finish = finish.parent
+    path.reverse()
+    return path
+    
+
 
 if __name__ == '__main__':
     t = np.array([
@@ -762,17 +866,49 @@ if __name__ == '__main__':
     # ]) invalid
     
     # print(t)
+
+    trivial_knot = RopeTopology(np.empty([4,0],dtype=np.int32))
+    trefoil_knot = RopeTopology(np.array([
+        [ 0, 1, 2, 3, 4, 5],
+        [ 3, 4, 5, 0, 1, 2],
+        [ 1,-1, 1,-1, 1,-1],
+        [-1,-1,-1,-1,-1,-1]
+    ],dtype=np.int32))
+
+    topological_path = find_topological_path(trivial_knot,trefoil_knot)
+
+    for n in topological_path:
+        print(f'rep:{n.value.rep}\naction:{n.action}')
+
     f, (ax1,ax2) = plt.subplots(1,2)
+    trivial_knot.construct_geometry()
+    trivial_knot.plot(ax1)
+    trefoil_knot.construct_geometry()
+    trefoil_knot.plot(ax2)
 
-    R = RopeTopology(t)
-    R.construct_geometry()
-    R.plot(ax1)
+    plt.pause(2)
 
-    test_R = R.add_R1(0,1,1)
-    test_R.construct_geometry()
-    test_R.plot(ax2)
+    for i in range(1,len(topological_path)):
+        ax1.clear()
+        ax2.clear()
 
-    plt.show()
+        type,action,after_segs = topological_path[i].action
+        pick_segs = action[0]
+        topological_path[i-1].value.construct_geometry()
+        topological_path[i-1].value.plot(ax1,pick_segs)
+        topological_path[i].value.construct_geometry()
+        topological_path[i].value.plot(ax2,after_segs)
+        plt.pause(2)
+
+    # R = RopeTopology(t)
+    # R.construct_geometry()
+    # R.plot(ax1)
+
+    # test_R = R.add_R1(0,1,1)
+    # test_R.construct_geometry()
+    # test_R.plot(ax2)
+
+    # plt.show()
 
 
 

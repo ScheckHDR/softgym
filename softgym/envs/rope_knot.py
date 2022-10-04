@@ -109,9 +109,7 @@ class RopeKnotEnv(RopeNewEnv):
         self.workspace =np.array([[-0.35,0.35],[-0.35,0.35]])
         self.goal_configuration = deepcopy(generate_random_topology(self.goal_crossings))
         print(self.goal_configuration)
-        
-
-        
+              
     def _reset(self):
         
         config = self.current_config
@@ -202,8 +200,7 @@ class RopeKnotEnv(RopeNewEnv):
         full_rep = np.concatenate((np.transpose(particle_pos[:,[0,2]]),topo_test),axis=0)
 
         return full_rep
-
-   
+  
     def _is_done(self):
         current = self.get_topological_representation()
         trimmed_crossings = np.trim_zeros(current[4,:],'f')
@@ -232,7 +229,6 @@ class RopeKnotEnv(RopeNewEnv):
         else:
             return False
         
-
     def _step(self, action):
         rope = self._get_obs()
         rope_frame = rope['tail']
@@ -308,18 +304,14 @@ class RopeKnotEnv(RopeNewEnv):
         #     raise NotImplementedError
         return
 
-    
-
     def _get_obs(self):
         topo = self.get_topological_representation().astype(float)
 
         return convert_topo_rep(topo,self.workspace,self.observation_space)
         
-
     def get_keypoints(self):
         particle_pos = np.array(pyflex.get_positions()).reshape([-1, 4])[:, :3]
         return particle_pos#[self.key_point_indices, :3]
-
 
     def _get_info(self):
         return dict()

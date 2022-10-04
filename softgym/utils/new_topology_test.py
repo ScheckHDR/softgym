@@ -727,9 +727,9 @@ class RopeTopology:
 
     @staticmethod
     def quick_check(topo_np):
-        for col in topo_np.T:
-            if topo_np[1,col[1]] != col[0] or topo_np[2,col[1]] == col[2] or topo_np[3,col[1]] != col[3]:
-                return False
+        # for col in topo_np.T:
+        #     if topo_np[1,col[1]] != col[0] or topo_np[2,col[1]] == col[2] or topo_np[3,col[1]] != col[3]:
+        #         return False
         return True
 
 
@@ -746,6 +746,21 @@ class RopeTopology:
 
     def __eq__(self,other) -> bool:
         return np.all(self.rep == other.rep)
+
+    def find_geometry_indices_matching_seg(self,segment_number,incidence_matrix) -> List[int]:
+        if self.size == 0:
+            return [i for i in range(incidence_matrix.shape[1])]
+        else:
+            seg_num = 0
+            start_idx = 0
+            for row_num in range(incidence_matrix.shape[0]):
+                if np.any(incidence_matrix[row_num,:] != 0):
+                    seg_num += 1
+                    if seg_num > segment_number:
+                        return [i for i in range(start_idx,row_num)]
+                    elif seg_num == segment_number:
+                        start_idx = row_num
+
 
     @property
     def size(self):

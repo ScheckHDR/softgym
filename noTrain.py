@@ -31,7 +31,7 @@ def main(env_kwargs):
         topo_obs = get_topological_representation(geoms).astype(np.int32)
         print(topo_obs)
         t = RopeTopology(topo_obs)
-        plan = find_topological_path(t,trefoil_knot)
+        plan = find_topological_path(t,trefoil_knot,max(trefoil_knot.size,t.size))
         action = plan[1].action
         print(plan[1].value.rep)
 

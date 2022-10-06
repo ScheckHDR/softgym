@@ -3,6 +3,8 @@ from copy import deepcopy
 from typing import Union, List, Tuple
 import matplotlib.pyplot as plt
 from queue import PriorityQueue, Queue
+from collections import deque
+import time
 # from accessify import private
 
 class InvalidTopology(Exception):
@@ -501,7 +503,7 @@ class Crossing:
         # return [seg[0] for seg in self.attachment_points]    
 
 class RopeTopology:
-    def __init__(self,topo_np):
+    def __init__(self,topo_np,check_validity=True):
         if not RopeTopology.quick_check(topo_np):
             raise InvalidTopology("Representation failed initial check.")
         self._topology:np.ndarray = topo_np
@@ -532,45 +534,46 @@ class RopeTopology:
                 new_segment.attach_crossing(c,True)
 
                 # would have created a new region, check that this doesn't invalidate anything.
-                for is_left in [True,False]:
-                    test_crossing = c
-                    prev_seg = new_segment
-                    inputs = 0
-                    outputs = 0
-                    is_input = True
-                    while True:
-                        next_seg, was_output = test_crossing.get_side_segment(prev_seg,is_left,is_input)
+                if check_validity:
+                    for is_left in [True,False]:
+                        test_crossing = c
+                        prev_seg = new_segment
+                        inputs = 0
+                        outputs = 0
+                        is_input = True
+                        while True:
+                            next_seg, was_output = test_crossing.get_side_segment(prev_seg,is_left,is_input)
 
-                        if next_seg is not None and next_seg.segment_num == 0:
-                            #ignore end crossing, reverse direction.
-                            prev_seg = next_seg
-                            is_input = True
-                            continue
-                        if next_seg == None:
-                            inputs += test_crossing.empty_type_on_side(prev_seg,True,is_left)
-                            outputs += test_crossing.empty_type_on_side(prev_seg,False,is_left)
-                            next_seg = test_crossing.get_connected_segment(prev_seg,is_input)
-                            was_output = is_input
-                            if next_seg is None:
-                                # Probably fucking R1
-                                next_seg,was_output = test_crossing.get_side_segment(prev_seg,not is_left,is_input)
-                            if next_seg.segment_num == 0:
+                            if next_seg is not None and next_seg.segment_num == 0:
+                                #ignore end crossing, reverse direction.
                                 prev_seg = next_seg
                                 is_input = True
                                 continue
-                                # next_seg = test_crossing.get_side_segment(prev_seg,is_left)
+                            if next_seg == None:
+                                inputs += test_crossing.empty_type_on_side(prev_seg,True,is_left)
+                                outputs += test_crossing.empty_type_on_side(prev_seg,False,is_left)
+                                next_seg = test_crossing.get_connected_segment(prev_seg,is_input)
+                                was_output = is_input
+                                if next_seg is None:
+                                    # Probably fucking R1
+                                    next_seg,was_output = test_crossing.get_side_segment(prev_seg,not is_left,is_input)
+                                if next_seg.segment_num == 0:
+                                    prev_seg = next_seg
+                                    is_input = True
+                                    continue
+                                    # next_seg = test_crossing.get_side_segment(prev_seg,is_left)
 
-                        test_crossing = next_seg.get_other_crossing(test_crossing)
-                        prev_seg = next_seg    
-                        is_input = was_output                   
+                            test_crossing = next_seg.get_other_crossing(test_crossing)
+                            prev_seg = next_seg    
+                            is_input = was_output                   
 
-                        if test_crossing == c:
-                            #done full loop
-                            break
+                            if test_crossing == c:
+                                #done full loop
+                                break
 
-                    if inputs > outputs:
-                        raise InvalidTopology
-                
+                        if inputs > outputs:
+                            raise InvalidTopology
+                    
                 prev_crossing = c
             prev_over = is_over
 
@@ -689,7 +692,7 @@ class RopeTopology:
         r1_rep = np.hstack([T,N])
         return RopeTopology(r1_rep[:,r1_rep[0,:].argsort()])
 
-    def add_C(self,over_ind:int,under_ind:int,sign:int,under_first:bool) -> Tuple["RopeTopology",List[int]]:
+    def add_C(self,over_ind:int,under_ind:int,sign:int,under_first:bool,return_raw:bool = False) -> Tuple["RopeTopology",List[int]]:
         assert over_ind in [0,self.size] or under_ind in [0,self.size], f'C moves require at least one of the affected indices to be the end of the rope.'         
         T = deepcopy(self.rep)
 
@@ -722,9 +725,14 @@ class RopeTopology:
         T[np.where(T[:2,:] >= min(over_ind,under_ind))] += 1
 
         r2_rep = np.hstack([T,N])
-
-        return RopeTopology(r2_rep[:,r2_rep[0,:].argsort()]), over_segs
-    def remove_C(self,segment_num:int) -> Tuple["RopeTopology",List[int]]:
+        r2_rep = r2_rep[:,r2_rep[0,:].argsort()]
+        if return_raw:
+            if RopeTopology.quick_check(r2_rep):
+                return r2_rep, over_segs
+            else:
+                raise InvalidTopology(f"Could not add C move. {self.rep} does not allow segment {over_ind} to be placed over segment {under_ind}, with sign {sign}.")
+        return RopeTopology(r2_rep), over_segs
+    def remove_C(self,segment_num:int,return_raw:bool = False) -> Tuple["RopeTopology",List[int]]:
         assert segment_num in [0,self.size], f'segment_num must relate to the ends of the rope'
 
         T = deepcopy(self.rep)
@@ -737,6 +745,11 @@ class RopeTopology:
         T[np.where(T[:2,:] >= b)] -= 1
         T[np.where(T[:2,:] >= a)] -= 1
 
+        if return_raw:
+            if RopeTopology.quick_check(T):
+                return T
+            else:
+                raise InvalidTopology(f"Could not remove C move. {self.rep} does not allow {segment_num} to be moved.") # This should never occur.
         return RopeTopology(T)
     @staticmethod
     def quick_check(topo_np):
@@ -758,7 +771,11 @@ class RopeTopology:
         return np.where(self._topology[0,:] == col)[0][0]
 
     def __eq__(self,other) -> bool:
-        return np.all(self.rep == other.rep)
+        if isinstance(other,RopeTopology):
+            return np.all(self.rep == other.rep)
+        elif isinstance(other,np.ndarray):
+            return np.all(self.rep == other)
+        raise ValueError(f"Cannot compare type RopeTopology with type {type(other)}.")
 
     def find_geometry_indices_matching_seg(self,segment_number,incidence_matrix) -> List[int]:
         if self.size == 0:
@@ -833,19 +850,50 @@ def find_grid_path(start,end,occupancy) -> np.ndarray:
     return np.vstack([*path]).reshape([-1,2])
             
 class RopeTopologyNode:
-    def __init__(self,value:RopeTopology,parent:Union[None,RopeTopology]=None,action=None):
+    def __init__(self,value:RopeTopology,priority:int,parent:Union[None,RopeTopology]=None,action=None):
         self.value = value
         self.parent = parent
         self.action = action
+        self.priority = priority
     def __eq__(self,other):
-        return self.value == other.value
-def find_topological_path(start:RopeTopology,end:RopeTopology) -> List[RopeTopology]:
+        if isinstance(other,RopeTopologyNode):
+            return self.value == other.value
+        elif isinstance(other,RopeTopology) or isinstance(other,np.ndarray):
+            return self.value == other
+        raise ValueError(f"Cannot compare type RopeTopologyNode to type {type(other)}.")
+    def __lt__(self,other):
+        self.priority < other.priority
+    
+    @property
+    def num_parents(self):
+        t = self
+        i = 0
+        while self.parent is not None:
+            i += 1
+            t = self.parent
+        return i
 
-    frontier = Queue()
-    frontier.put(RopeTopologyNode(start))
+
+def find_topological_path(start:RopeTopology,end:RopeTopology,max_rep_size = np.inf) -> List[RopeTopology]:
+
+    frontier = PriorityQueue()
+    frontier.put((0,RopeTopologyNode(start,0)))
     visited = []
 
-    def parse_add_C(current):
+    def distance_func(current,end):
+        # a = abs(end.size - current.size)
+        a = max(end.rep.size,current.rep.size) + abs(end.size-current.size)
+        if end.size == current.size:
+            a -= np.sum(end.rep[1,:] == current.rep[1,:])
+        
+        b = max(0,current.rep[3,:][np.where(current.rep[3,:] == -1)].size - end.rep[3,:][np.where(end.rep[3,:] == -1)].size)
+        c = max(0,current.rep[3,:][np.where(current.rep[3,:] ==  1)].size - end.rep[3,:][np.where(end.rep[3,:] ==  1)].size)
+
+        return a+b+c
+
+    def explore_add_C(current):
+        if current.value.size > max_rep_size:
+            return 
         for over_seg in range(current.value.size+1):
             for under_seg in range(current.value.size+1):
                 for sign in [-1,1]:
@@ -853,46 +901,47 @@ def find_topological_path(start:RopeTopology,end:RopeTopology) -> List[RopeTopol
                         for under_first in ([False,True] if over_seg == under_seg else [False]):
                             try:
                                 action_args = [over_seg,under_seg,sign,under_first]
-                                test, after_action_segs = current.value.add_C(*action_args)
-                                if test == end:
-                                    return RopeTopologyNode(end,parent=current,action = ["+C",action_args,after_action_segs])
-                                new_node = RopeTopologyNode(test,parent=current,action = ["+C",action_args,after_action_segs])
-                                if test not in visited and new_node not in frontier.queue:
-                                    frontier.put(new_node)
+                                test, after_action_segs = current.value.add_C(*action_args,return_raw=True)
+                                if end == test:
+                                    return RopeTopologyNode(end,0,parent=current,action = ["+C",action_args,after_action_segs])
+                                if test.shape[1] >= max_rep_size:
+                                    break
+                                if test not in visited and test not in frontier.queue:
+                                    new_topo = RopeTopology(test,check_validity=False)
+                                    dist = distance_func(new_topo,end)
+                                    frontier.put((dist,RopeTopologyNode(new_topo,dist,parent=current,action = ["+C",action_args,after_action_segs])))
                             except InvalidTopology:
                                 pass
-
-    def parse_remove_C(current):
-        if current.value.size == 0:
+    def explore_remove_C(current):
+        if not (0 < current.value.size < max_rep_size):
             return
         for seg in [0,current.value.size]:
             try:
-                test = current.value.remove_C(seg)
-                if test == end:
-                    return RopeTopologyNode(end,parent=current,action=["-C",[seg],[]])
-                new_node = RopeTopologyNode(test,parent=current,action=["-C",[seg],[]])
-                if test not in visited and new_node not in frontier.queue:
-                    frontier.put(new_node)
+                test = current.value.remove_C(seg,return_raw=True)
+                if end == test:
+                    return RopeTopologyNode(end,0,parent=current,action=["-C",[seg],[]])
+                if test not in visited and test not in frontier.queue:
+                    new_topo = RopeTopology(test,check_validity=False)
+                    dist = distance_func(new_topo,end)
+                    frontier.put((dist,RopeTopologyNode(new_topo,dist,parent=current,action=["-C",[seg],[]])))
             except InvalidTopology:
                 pass
 
+    def explore():
+        while not frontier.empty():
+            current = frontier.get()[1]
+            for explore_func in [explore_add_C,explore_remove_C]:
+                finish = explore_func(current)
+                if finish is not None:
+                    return finish
+            visited.append(current.value)
 
-    while not frontier.empty():
-        current = frontier.get()
 
-        finish = parse_add_C(current)
-        if finish is not None:
-            break
-        finish = parse_remove_C(current)
-        if finish is not None:
-            break
-        visited.append(current.value)
-    
-    
+    n = explore()
     path = []
-    while finish is not None:
-        path.append(finish)
-        finish = finish.parent
+    while n is not None:
+        path.append(n)
+        n = n.parent
     path.reverse()
     return path
     

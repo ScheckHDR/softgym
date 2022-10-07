@@ -9,7 +9,7 @@ from softgym.utils.pyflex_utils import random_pick_and_place, center_object
 from softgym.utils.topology import *
 from softgym.action_space.action_space import PickerTraj
 from gym.spaces import Box, Discrete, Dict
-import softgym.utils.trajectories
+from softgym.utils.trajectories import simple_trajectory
 
 import time
 
@@ -42,10 +42,11 @@ def convert_topo_rep(topo,workspace,obs_spaces):
 
         seg = topo[3,i]
         corr_seg = np.where(topo[4,:] == seg)[0]
-        j = np.where(topo[2,corr_seg] != 0)[0]
+        #j = np.where(topo[2,corr_seg] != 0)[0]
+        j = corr_seg[-1] + 1
 
-        incidence_matrix[i,corr_seg[j]] = topo[2,i]
-        incidence_matrix[corr_seg[j],i] = topo[2,corr_seg[j]]
+        incidence_matrix[i,j] = topo[2,i]
+        incidence_matrix[j,i] = topo[2,j]
 
 
 
@@ -73,15 +74,6 @@ class RopeKnotEnv(RopeNewEnv):
 
         self.headless = kwargs['headless']
 
-        # Because wandb converted the function pointers to strings, need to convert them back.
-        if 'trajectory_funcs' in kwargs:
-            self.trajectory_gen_funcs = []
-            for func in kwargs['trajectory_funcs']:
-                self.trajectory_gen_funcs.append(getattr(softgym.utils.trajectories,func.split('.')[-1]))
-        else:
-            self.trajectory_gen_funcs = [softgym.utils.trajectories.box_trajectory]
-
-        self.num_traj = len(self.trajectory_gen_funcs)
         self.maximum_crossings = kwargs['maximum_crossings']
         self.goal_crossings = kwargs['goal_crossings']
 
@@ -238,7 +230,7 @@ class RopeKnotEnv(RopeNewEnv):
 
         theta = rope_frame[0,2]
 
-        r_mat = np.array(
+        T_mat = np.array(
             [
                 [np.math.cos(theta),0,np.math.sin(theta),rope_frame[0,0]],
                 [0,1,0,0],
@@ -259,25 +251,28 @@ class RopeKnotEnv(RopeNewEnv):
         ).reshape((4,-1))
 
         pick_idx = round(action[0] * (rel_positions_h.shape[1]-1))
-        pick_coords_rel_h = rel_positions_h[:,pick_idx]
+        pick_coords_rel_h = np.expand_dims(rel_positions_h[:,pick_idx],-1)
 
-        place_coords_rel_h = pick_coords_rel_h + np.array([action[1],0,action[2],0])
+        waypoints_rel = np.array(action[1:]).reshape([-1,2]).T
+        waypoints_rel_h = np.vstack([waypoints_rel[0,:],np.zeros([1,waypoints_rel.shape[1]]),waypoints_rel[1,:],np.zeros([1,waypoints_rel.shape[1]])]) # Making last row zeros instead of ones for the homogeneous as the ones will come from the addition on next line.
+        waypoints_h = pick_coords_rel_h + waypoints_rel_h
+        # place_coords_rel_h = pick_coords_rel_h + np.array([action[1],0,action[2],0])
 
-        pick_coords = (r_mat @ pick_coords_rel_h)[0:3]
-        place_coords = (r_mat @ place_coords_rel_h)[0:3]
+        pick_coords = (T_mat @ pick_coords_rel_h)[0:3]
+        waypoint_coords = (T_mat @ waypoints_h)[0:3]
 
-        pos = pyflex.get_positions().reshape((-1, 4))
+        # pos = pyflex.get_positions().reshape((-1, 4))
         # print(f'frame: {rope_frame}')
         # print(f'pick: {pick_coords}, should be {pos[pick_idx,:3]}')
         # print(f'place_h :{place_coords_rel_h}')
         # print(f'place:{place_coords}')
         # print('-'*50)
 
-        traj_index = 0
-        traj = [self.trajectory_gen_funcs[traj_index](pick_coords,place_coords,num_points=150)]
-        traj_action = np.concatenate(traj)
-        traj_action = traj_action.reshape((self.num_picker,int(traj_action.size/3/self.num_picker),3))
-        self.action_tool.step(traj_action,renderer=self.render if not self.headless else lambda *args, **kwargs : None)
+        traj = np.expand_dims(simple_trajectory(np.hstack([pick_coords,waypoint_coords]).T,height=0.1,num_points_per_leg=50),0) # only a single picker
+        # traj = [self.trajectory_gen_funcs[traj_index](pick_coords,place_coords,num_points=150)]
+        # traj_action = np.concatenate(traj)
+        # traj_action = traj_action.reshape((self.num_picker,int(traj_action.size/3/self.num_picker),3))
+        self.action_tool.step(traj,renderer=self.render if not self.headless else lambda *args, **kwargs : None)
 
 
         # if self.action_mode == 'picker_trajectory':

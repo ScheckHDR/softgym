@@ -3,11 +3,11 @@ from copy import deepcopy
 from typing import Dict
 import numpy as np
 import multiprocessing as mp
+import matplotlib.pyplot as plt
 
 import gym
 from softgym.envs.rope_knot import RopeKnotEnv
 from softgym.utils.normalized_env import normalize
-from softgym.utils.trajectories import box_trajectory, curved_trajectory, curved_trajectory
 
 from softgym.utils.new_topology_test import RopeTopology,RopeTopologyNode,find_topological_path
 from softgym.utils.topology import get_topological_representation
@@ -22,6 +22,30 @@ trefoil_knot = RopeTopology(np.array([
         [-1,-1,-1,-1,-1,-1]
     ],dtype=np.int32))
 
+
+def get_arc(start,end,sign:bool,num_points:int):
+    # start and end are x,y pairs
+    dx = end[0] - start[0]
+    dy = end[1] - start[1]
+
+    xc = start[0] + dx/2
+    yc = start[1] + dy/2
+
+    theta_s = np.arctan2(start[1]-yc,start[0]-xc)# % (2*np.pi)
+    theta_e = np.arctan2(end[1]-yc,end[0]-xc)# % (2*np.pi)
+
+    if sign:
+        theta = np.linspace(theta_s-2*np.pi,theta_e,num_points)
+    else:
+        theta = np.linspace(theta_s,theta_e,num_points)
+    r = np.linalg.norm(end-start)/2
+
+    x = r*np.cos(theta) + xc
+    y = r*np.sin(theta) + yc
+
+    return np.hstack([x.reshape([-1,1]),y.reshape([-1,1])])
+
+
 def main(env_kwargs):
     env = RopeKnotEnv(**env_kwargs)
 
@@ -35,32 +59,70 @@ def main(env_kwargs):
         action = plan[1].action
         print(plan[1].value.rep)
 
+        p = np.vstack([np.zeros((1,2)),obs['shape'].T])
+        mid_region = None
         if action[0] == "+C":
-            if action[1][0] == action[1][1]:
-                segment_idxs = t.find_geometry_indices_matching_seg(action[1][0],obs['cross'])
+            over_seg,under_seg,sign,under_first = action[1]
+            if over_seg == under_seg:
+                segment_idxs = t.find_geometry_indices_matching_seg(over_seg,obs['cross'])
                 l = len(segment_idxs)
-                if action[1][3]:
-                    # under first
-                    pick_seg = segment_idxs[l//2:]
-                    place_seg = segment_idxs[:l//2]
+                if under_first:
+                    under_indices = segment_idxs[:l//2]
+                    # over_indices = segment_idxs[l//2:]
+                    pick_idx = segment_idxs[-1]
                 else:
-                    place_seg = segment_idxs[l//2:]
-                    pick_seg = segment_idxs[:l//2]
-                    
+                    under_indices = segment_idxs[l//2:]
+                    # over_indices = segment_idxs[:l//2]
+                    pick_idx = segment_idxs[0]
+                diameter = p[under_indices,:]
+
+                place_region = np.vstack([get_arc(diameter[0,:],diameter[-1,:],sign > 0,100),diameter[::-1,:]])
+                mid_region = np.vstack([get_arc(diameter[0,:],diameter[-1,:],sign < 0,100),diameter[::-1,:]])
+            
             else:
-                pick_seg = t.find_geometry_indices_matching_seg(action[1][0],obs['cross'])
-                place_seg = t.find_geometry_indices_matching_seg(action[1][1],obs['cross'])
-            pick_idx = pick_seg[len(pick_seg)//2]
-            place_idx = place_seg[len(place_seg)//2]
+                over_idxs = t.find_geometry_indices_matching_seg(over_seg,obs['cross'])
+                under_idxs = t.find_geometry_indices_matching_seg(under_seg,obs['cross'])
 
-            pick_act = pick_idx / geoms.shape[0]
-            place_act = (obs['shape'][:,place_idx] - obs['shape'][:,pick_idx]) * 1.2
+                if over_seg in [0,t.size]:
+                    if over_seg == 0:
+                        pick_idx = 0
+                    elif over_seg == t.size:
+                        pick_idx = over_idxs[-1]
+                    
+                    place_region_segs = t.get_loop(under_seg,sign)
+                    place_region_idxs = []
+                    for s in place_region_segs:
+                        place_region_idxs.extend(t.find_geometry_indices_matching_seg(s.segment_num,obs['cross']))
+                    place_region = p[place_region_idxs,:]
+                    
 
-            robot_action = (pick_act,place_act[0],place_act[1])
+
+
+            place_pos = np.mean(place_region,axis=0)
+            delta_end = place_pos - obs['shape'][:2,pick_idx].reshape([1,2])
+
+            pick_norm = pick_idx/(p.shape[0]-1)
+            if mid_region is not None:
+                mid_pos = np.mean(mid_region,axis=0)
+                delta_mid = mid_pos - obs['shape'][:2,pick_idx].reshape([1,2])
+                action = [pick_norm,*delta_mid.tolist(),*delta_end.tolist()]
+            else:
+                action = [pick_norm,*delta_end.tolist()]
+
+            waypoints = np.vstack([p[pick_idx,:],np.array(action[1:]).reshape([-1,2])])
+            plt.clf()
+            plt.plot(p[:,0],p[:,1])
+            plt.fill(place_region[:,0],place_region[:,1],'b')
+            if mid_region is not None:
+                plt.fill(mid_region[:,0],mid_region[:,1],'r')
+            plt.plot(waypoints[:,0],waypoints[:,1],'k-')
+            plt.draw()
+            plt.pause(1e-1)
+
 
         elif action[0] == "-C":
             raise NotImplementedError
-        obs,rew,done,info = env.step(robot_action)
+        obs,rew,done,info = env.step(action)
 
         if rew > 1e6:
             break
@@ -120,8 +182,8 @@ if __name__ == '__main__':
         'action_repeat'     : 1,
         'render_mode'       : args.render_mode,
         'num_variations'    : args.num_variations,
-        'use_cached_states' : True,
-        'save_cached_states': True,
+        'use_cached_states' : True,#True,
+        'save_cached_states': False,
         'deterministic'     : False,
         # 'trajectory_funcs'  : [box_trajectory],
         'maximum_crossings' : args.maximum_crossings,

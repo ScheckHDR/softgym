@@ -414,17 +414,6 @@ class Crossing:
                 return (self.over_out,True) if left == s else (self.over_in,False)
 
         raise Exception
-
-        # if direction > 0:
-        #     if segment in [self.under_in,self.under_out]:
-        #         return self.over_in if left > 0 else self.over_out
-        #     elif segment in [self.over_in,self.over_out]:
-        #         return self.under_out if left > 0 else self.under_in
-        # elif direction < 0:
-        #     if segment in [self.under_in,self.under_out]:
-        #         return self.over_out if left > 0 else self.over_in
-        #     elif segment in [self.over_in,self.over_out]:
-        #         return self.under_in if left > 0 else self.under_out
             
     def empty_type_on_side(self,seg,is_input:bool,from_left:bool) -> bool:
         if seg == self.under_in:
@@ -675,6 +664,40 @@ class RopeTopology:
         for segment in self.segments:
             segment.plot(ax,'r-' if segment.segment_num in pick_segs else 'b-',*args,**kwargs)
 
+    def get_loop(self,segment_num:int,on_left:bool) -> List[Segment]:
+        assert 0 <= segment_num <= self.size, f'Segment number {segment_num} is out of range.'
+
+        if self.size == 0:
+            return []
+        
+        segments = [self.segments[segment_num]]
+        prev_seg = self.segments[segment_num]
+        c = prev_seg.end_crossing
+        is_input = True
+        while True:
+            next_seg, was_output = c.get_side_segment(prev_seg,on_left,is_input)
+            if next_seg in segments:
+                break
+
+            # Including rope ends may complicate things for no added benefit, so skip it.
+            if next_seg.segment_num == 0:
+                prev_seg = next_seg
+                is_input = True
+                continue
+            elif next_seg.segment_num == self.size:
+                prev_seg = next_seg
+                is_input = False
+                continue
+
+            segments.append(next_seg)
+            is_input = was_output
+            c = next_seg.get_other_crossing(c)
+            prev_seg = next_seg
+        
+        return segments
+    
+
+
     def add_R1(self,segment_num:int,over:int,sign:int) -> "RopeTopology":
         assert over in [-1,1],f''
         assert sign in [-1,1],f''
@@ -790,6 +813,8 @@ class RopeTopology:
                         return [i for i in range(start_idx,row_num)]
                     elif seg_num == segment_number:
                         start_idx = row_num
+
+        return [i for i in range(start_idx,row_num)]
 
 
     @property
@@ -908,7 +933,7 @@ def find_topological_path(start:RopeTopology,end:RopeTopology,max_rep_size = np.
                                     break
                                 if test not in visited and test not in frontier.queue:
                                     new_topo = RopeTopology(test,check_validity=False)
-                                    dist = distance_func(new_topo,end)
+                                    dist = distance_func(new_topo,end) + (0.5 if over_seg == under_seg else 0)
                                     frontier.put((dist,RopeTopologyNode(new_topo,dist,parent=current,action = ["+C",action_args,after_action_segs])))
                             except InvalidTopology:
                                 pass

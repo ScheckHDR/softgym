@@ -41,9 +41,12 @@ def convert_topo_rep(topo,workspace,obs_spaces):
             continue
 
         seg = topo[3,i]
-        corr_seg = np.where(topo[4,:] == seg)[0]
+        corr_seg = topo[4,i]
+        if corr_seg.size == 0:
+            # should have found them all
+            break
         #j = np.where(topo[2,corr_seg] != 0)[0]
-        j = corr_seg[-1] + 1
+        j = min(N-1,corr_seg[-1] + 1)
 
         incidence_matrix[i,j] = topo[2,i]
         incidence_matrix[j,i] = topo[2,j]

@@ -933,7 +933,7 @@ def find_topological_path(start:RopeTopology,end:RopeTopology,max_rep_size = np.
                                     break
                                 if test not in visited and test not in frontier.queue:
                                     new_topo = RopeTopology(test,check_validity=False)
-                                    dist = distance_func(new_topo,end) + (0.5 if over_seg == under_seg else 0)
+                                    dist = distance_func(new_topo,end) + (0.5 if over_seg == under_seg else 0) + (0.5 if current.action is not None and over_seg in current.action[1] else 0)
                                     frontier.put((dist,RopeTopologyNode(new_topo,dist,parent=current,action = ["+C",action_args,after_action_segs])))
                             except InvalidTopology:
                                 pass

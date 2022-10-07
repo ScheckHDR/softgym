@@ -13,8 +13,9 @@ from softgym.utils.new_topology_test import RopeTopology,RopeTopologyNode,find_t
 from softgym.utils.topology import get_topological_representation
 
 import random
-random.seed(9)
-np.random.seed(9)
+seed = 11
+random.seed(seed)
+np.random.seed(seed)
 trefoil_knot = RopeTopology(np.array([
         [ 0, 1, 2, 3, 4, 5],
         [ 3, 4, 5, 0, 1, 2],
@@ -98,30 +99,48 @@ def main(env_kwargs):
 
 
 
-            place_pos = np.mean(place_region,axis=0)
-            delta_end = place_pos - obs['shape'][:2,pick_idx].reshape([1,2])
 
-            pick_norm = pick_idx/(p.shape[0]-1)
-            if mid_region is not None:
-                mid_pos = np.mean(mid_region,axis=0)
-                delta_mid = mid_pos - obs['shape'][:2,pick_idx].reshape([1,2])
-                action = [pick_norm,*delta_mid.tolist(),*delta_end.tolist()]
-            else:
-                action = [pick_norm,*delta_end.tolist()]
-
-            waypoints = np.vstack([p[pick_idx,:],np.array(action[1:]).reshape([-1,2])])
-            plt.clf()
-            plt.plot(p[:,0],p[:,1])
-            plt.fill(place_region[:,0],place_region[:,1],'b')
-            if mid_region is not None:
-                plt.fill(mid_region[:,0],mid_region[:,1],'r')
-            plt.plot(waypoints[:,0],waypoints[:,1],'k-')
-            plt.draw()
-            plt.pause(1e-1)
 
 
         elif action[0] == "-C":
-            raise NotImplementedError
+            seg = action[1][0]
+            if seg == 0:
+                pick_idx = 0
+                other_seg = 1
+            elif seg == t.size:
+                pick_idx = p.shape[0]-1
+                other_seg = t.size-1
+            else:
+                raise ValueError("Segment must be one of the two end segments of the rope.")
+            
+            undo_idxs = t.find_geometry_indices_matching_seg(other_seg,obs['cross'])
+
+            place_idx = undo_idxs[len(undo_idxs)//2]
+            place_region = p[place_idx,:].reshape([1,2])
+
+            
+
+        place_pos = np.mean(place_region,axis=0)
+        delta_end = place_pos - obs['shape'][:2,pick_idx].reshape([1,2])
+
+        pick_norm = pick_idx/(p.shape[0]-1)
+        if mid_region is not None:
+            mid_pos = np.mean(mid_region,axis=0)
+            delta_mid = mid_pos - obs['shape'][:2,pick_idx].reshape([1,2])
+            action = [pick_norm,*delta_mid.tolist(),*delta_end.tolist()]
+        else:
+            action = [pick_norm,*delta_end.tolist()]
+        
+        waypoints = np.vstack([p[pick_idx,:],np.array(action[1:]).reshape([-1,2])])
+        plt.clf()
+        plt.plot(p[:,0],p[:,1])
+        plt.fill(place_region[:,0],place_region[:,1],'b')
+        if mid_region is not None:
+            plt.fill(mid_region[:,0],mid_region[:,1],'r')
+        plt.plot(waypoints[:,0],waypoints[:,1],'k-')
+        plt.draw()
+        plt.pause(1e-1)
+
         obs,rew,done,info = env.step(action)
 
         if rew > 1e6:
@@ -184,7 +203,7 @@ if __name__ == '__main__':
         'num_variations'    : args.num_variations,
         'use_cached_states' : True,#True,
         'save_cached_states': False,
-        'deterministic'     : False,
+        'deterministic'     : True,
         # 'trajectory_funcs'  : [box_trajectory],
         'maximum_crossings' : args.maximum_crossings,
         'goal_crossings'    : args.goal_crossings,

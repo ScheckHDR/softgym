@@ -32,19 +32,26 @@ def get_arc(start,end,sign:bool,num_points:int):
     xc = start[0] + dx/2
     yc = start[1] + dy/2
 
-    theta_s = np.arctan2(start[1]-yc,start[0]-xc)# % (2*np.pi)
-    theta_e = np.arctan2(end[1]-yc,end[0]-xc)# % (2*np.pi)
+    theta_s = np.arctan2(start[1]-yc,start[0]-xc) + np.pi
+    theta_e = np.arctan2(end[1]-yc,end[0]-xc) + np.pi
 
     if sign:
-        theta = np.linspace(theta_s-2*np.pi,theta_e,num_points)
+        s = theta_s
+        e = theta_e
     else:
-        theta = np.linspace(theta_s,theta_e,num_points)
-    r = np.linalg.norm(end-start)/2
+        s = min(theta_s,theta_e)
+        e = max(theta_s,theta_e) - 2*np.pi
 
+    theta = np.linspace(s,e,num_points) 
+    r = np.linalg.norm(end-start)/2
     x = r*np.cos(theta) + xc
     y = r*np.sin(theta) + yc
 
-    return np.hstack([x.reshape([-1,1]),y.reshape([-1,1])])
+    coords = np.vstack([x,y]).T
+    if np.any(coords[0,:] - start > 1e-9):
+        coords = coords[::-1,:]
+
+    return coords
 
 
 def main(env_kwargs):
@@ -58,7 +65,7 @@ def main(env_kwargs):
         t = RopeTopology(topo_obs)
         plan = find_topological_path(t,trefoil_knot,max(trefoil_knot.size,t.size))
         action = plan[1].action
-        print(plan[1].value.rep)
+        # print(plan[1].value.rep)
 
         p = np.vstack([np.zeros((1,2)),obs['shape'].T])
         mid_region = None
@@ -95,9 +102,13 @@ def main(env_kwargs):
                     for s in place_region_segs:
                         place_region_idxs.extend(t.find_geometry_indices_matching_seg(s.segment_num,obs['cross']))
                     place_region = p[place_region_idxs,:]
-                    
 
+                else:
+                    l_pick = len(over_idxs)
+                    pick_idx = over_idxs[l_pick//2]
 
+                    l_place = len(under_idxs)
+                    place_region = p[l_place//2,:].reshape([1,2])
 
 
 
@@ -131,7 +142,7 @@ def main(env_kwargs):
         else:
             action = [pick_norm,*delta_end.tolist()]
         
-        waypoints = np.vstack([p[pick_idx,:],np.array(action[1:]).reshape([-1,2])])
+        waypoints = np.vstack([p[pick_idx,:],obs['shape'][:2,pick_idx].reshape([1,2])+np.array(action[1:]).reshape([-1,2])])
         plt.clf()
         plt.plot(p[:,0],p[:,1])
         plt.fill(place_region[:,0],place_region[:,1],'b')

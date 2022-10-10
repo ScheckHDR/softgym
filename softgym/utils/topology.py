@@ -677,13 +677,13 @@ def get_topological_representation(positions):
         if is_over:
             under_vect,over_vect = over_vect,under_vect
         cross_prod = np.cross(over_vect,under_vect)
-        sign = np.ones(len(intersections))#np.dot(cross_prod/np.linalg.norm(cross_prod),np.array([0,0,1]))
+        sign = np.dot(cross_prod/np.linalg.norm(cross_prod),np.array([0,1,0]))
 
         topo[:,i] = [
             i,
             matching_intersect,
             is_over*2 -1, # -1 or 1
-            sign[i]#/np.abs(sign[i]) # -1 or 1, disabled above
+            sign/np.abs(sign) # -1 or 1, disabled above
         ]
     return topo.astype(int)
 

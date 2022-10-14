@@ -6,7 +6,7 @@ from queue import PriorityQueue, Queue
 from collections import deque
 import time
 # from accessify import private
-
+from softgym.utils.topology import get_topological_representation
 class InvalidTopology(Exception):
     pass
 
@@ -417,25 +417,25 @@ class Crossing:
             
     def empty_type_on_side(self,seg,is_input:bool,from_left:bool) -> bool:
         if seg == self.under_in:
-            if self.sign > 0 == from_left:
+            if (self.sign > 0) == from_left:
                 return is_input and self.over_in == None
             else:
                 return not is_input and self.over_out == None
         elif seg == self.under_out:
-            if self.sign > 0 == from_left:
+            if (self.sign > 0) == from_left:
                 return not is_input and self.over_out == None
             else:
                 return is_input and self.over_in == None
         elif seg == self.over_in:
-            if self.sign > 0 == from_left:
-                return is_input and self.under_in == None
-            else:
+            if (self.sign > 0) == from_left:
                 return not is_input and self.under_out == None
+            else:
+                return is_input and self.under_in == None
         elif seg == self.over_out:
-            if self.sign > 0 == from_left:
-                return not is_input and self.under_out == None
-            else:
+            if (self.sign > 0) == from_left:
                 return is_input and self.under_in == None
+            else:
+                return not is_input and self.under_out == None
         else:
             raise Exception
 
@@ -930,7 +930,7 @@ def find_topological_path(start:RopeTopology,end:RopeTopology,max_rep_size = np.
                                 if end == test:
                                     return RopeTopologyNode(end,0,parent=current,action = ["+C",action_args,after_action_segs])
                                 if test.shape[1] >= max_rep_size:
-                                    break
+                                    continue
                                 if test not in visited and test not in frontier.queue:
                                     new_topo = RopeTopology(test,check_validity=False)
                                     dist = distance_func(new_topo,end) + (0.5 if over_seg == under_seg else 0) + (0.5 if current.action is not None and over_seg in current.action[1] else 0)
@@ -938,7 +938,7 @@ def find_topological_path(start:RopeTopology,end:RopeTopology,max_rep_size = np.
                             except InvalidTopology:
                                 pass
     def explore_remove_C(current):
-        if not (0 < current.value.size < max_rep_size):
+        if current.value.size == 0:
             return
         for seg in [0,current.value.size]:
             try:
@@ -973,19 +973,24 @@ def find_topological_path(start:RopeTopology,end:RopeTopology,max_rep_size = np.
 
 
 if __name__ == '__main__':
-    # t = np.array([
-    #     [ 0, 1, 2, 3, 4, 5],
-    #     [ 2, 3, 0, 1, 5, 4],
-    #     [ 1, 1,-1,-1, 1,-1],
-    #     [-1, 1,-1, 1, 1, 1]
-    # ])
     t = np.array([
-        [0,1],
-        [1,0],
-        [-1,1],
-        [1,1]
+        [ 0, 1, 2, 3, 4, 5],
+        [ 2, 3, 0, 1, 5, 4],
+        [ 1, 1,-1,-1, 1,-1],
+        [-1, 1,-1, 1, 1, 1]
     ])
-    RopeTopology(t)
+    # t = np.array([
+    #     [0,1],
+    #     [1,0],
+    #     [-1,1],
+    #     [1,1]
+    # ])
+    # t = np.array([
+    #     [0,1,2,3,4,5,6,7],
+    #     [1,0,5,6,7,2,3,4],
+    #     [-1,1,1,-1,-1,-1,1,1],
+    #     [-1,-1,-1,-1,1,-1,-1,1]
+    # ])
     # t = np.array([
     #     [ 0, 1, 2, 3, 4, 5, 6, 7, 8, 9,10,11],
     #     [11, 4, 5, 8, 1, 2, 7, 6, 3,10, 9, 0],
@@ -993,7 +998,6 @@ if __name__ == '__main__':
     #     [-1, 1, 1,-1, 1, 1, 1, 1,-1, 1, 1,-1]
     # ]) invalid
     
-    # print(t)
 
     # trivial_knot = RopeTopology(np.empty([4,0],dtype=np.int32))
     # trefoil_knot = RopeTopology(np.array([
@@ -1003,6 +1007,17 @@ if __name__ == '__main__':
     #     [-1,-1,-1,-1,-1,-1]
     # ],dtype=np.int32))
 
+    print(t)
+
+    # with open('geoms_test','rb') as f:
+    #     import pickle
+    #     geoms = pickle.load(f)
+    # plt.plot(geoms[:,0],geoms[:,2])
+    # plt.show()
+    # t = get_topological_representation(geoms).astype(np.int32)
+
+
+    RopeTopology(t)
     # topological_path = find_topological_path(trivial_knot,trefoil_knot)
 
     # for n in topological_path:

@@ -68,7 +68,7 @@ def convert_topo_rep(topo,workspace,obs_spaces):
 
 
 class RopeKnotEnv(RopeNewEnv):
-    def __init__(self, cached_states_path='rope_knot_init_states.pkl', **kwargs):
+    def __init__(self, goal_topology = None,cached_states_path='rope_knot_init_states.pkl', **kwargs):
         kwargs['action_mode'] = 'picker_trajectory'
         super().__init__(cached_states_path=cached_states_path,**kwargs)
         
@@ -103,7 +103,10 @@ class RopeKnotEnv(RopeNewEnv):
         # self.observation_space = Box(np.array([-1]*obs_dim),np.array([1]*obs_dim))
 
         self.workspace =np.array([[-0.35,0.35],[-0.35,0.35]])
-        self.goal_configuration = deepcopy(generate_random_topology(self.goal_crossings))
+        if goal_topology is not None:
+            self.goal_configuration = deepcopy(goal_topology)
+        else:
+            self.goal_configuration = deepcopy(generate_random_topology(self.goal_crossings))
         # print(self.goal_configuration)
               
     def _reset(self):
@@ -160,11 +163,15 @@ class RopeKnotEnv(RopeNewEnv):
         else:
             return -1
 
-    def get_geoms(self):
-        return np.array(pyflex.get_positions()).reshape([-1, 4])[:, :3]
+    def get_geoms(self,correct_x:bool=False):
+        # flip x axis to match regular x-y coordinate system.
+        geoms = np.array(pyflex.get_positions()).reshape([-1, 4])[:, :3]
+        if correct_x:
+            geoms[:,0] *= -1
+        return geoms
 
     def get_topological_representation(self):
-        particle_pos = np.array(pyflex.get_positions()).reshape([-1, 4])[:, :3]
+        particle_pos = self.get_geoms(True)
         
         topo_test = np.zeros((3,particle_pos.shape[0]))
         intersections = []
@@ -258,6 +265,7 @@ class RopeKnotEnv(RopeNewEnv):
         pick_coords_rel_h = np.expand_dims(rel_positions_h[:,pick_idx],-1)
 
         waypoints_rel = np.array(action[1:]).reshape([-1,2]).T
+
         waypoints_rel_h = np.vstack([waypoints_rel[0,:],np.zeros([1,waypoints_rel.shape[1]]),waypoints_rel[1,:],np.zeros([1,waypoints_rel.shape[1]])]) # Making last row zeros instead of ones for the homogeneous as the ones will come from the addition on next line.
         waypoints_h = pick_coords_rel_h + waypoints_rel_h
         # place_coords_rel_h = pick_coords_rel_h + np.array([action[1],0,action[2],0])
@@ -273,6 +281,7 @@ class RopeKnotEnv(RopeNewEnv):
         # print('-'*50)
 
         traj = np.expand_dims(simple_trajectory(np.hstack([pick_coords,waypoint_coords]).T,height=0.1,num_points_per_leg=50),0) # only a single picker
+        traj[:,:,0] *= -1
         # traj = [self.trajectory_gen_funcs[traj_index](pick_coords,place_coords,num_points=150)]
         # traj_action = np.concatenate(traj)
         # traj_action = traj_action.reshape((self.num_picker,int(traj_action.size/3/self.num_picker),3))
@@ -310,9 +319,12 @@ class RopeKnotEnv(RopeNewEnv):
         topo = self.get_topological_representation().astype(float)
 
         return convert_topo_rep(topo,self.workspace,self.observation_space)
-        
+
+    def get_obs(self):
+        return self._get_obs()
+
     def get_keypoints(self):
-        particle_pos = np.array(pyflex.get_positions()).reshape([-1, 4])[:, :3]
+        particle_pos = self.get_geoms(True)
         return particle_pos#[self.key_point_indices, :3]
 
     def _get_info(self):

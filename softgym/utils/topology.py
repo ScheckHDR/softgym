@@ -664,6 +664,7 @@ def get_topological_representation(positions):
             if intersect(positions[i],positions[i+1],positions[j],positions[j+1]):
                 intersections.append([i,j])
                 intersections.append([j,i])
+                intersect(positions[i],positions[i+1],positions[j],positions[j+1])
 
     intersections.sort(key = lambda a:a[0])
 

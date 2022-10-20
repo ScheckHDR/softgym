@@ -123,87 +123,91 @@ def topo_to_geometry_remove_C(topo,action,obs):
 def main(env_kwargs,all_args):
     # env = RopeKnotEnv(**env_kwargs)
     envs = SubprocVecEnv([lambda: RopeKnotEnv(goal_topology=trefoil_knot.rep,**env_kwargs)]*all_args.num_workers,'spawn')
-    with open(all_args.save_name,'ab') as pkl_file:
+    data = {'obs':[],'action':[],'reward':[],'next_obs':[]}
+    dones = [False]*all_args.num_workers
+    obs = envs.env_method('reset')
+    for _ in range(all_args.total_steps//all_args.num_workers):
+        env_actions = []
+        save_actions = []
 
-        dones = [False]*all_args.num_workers
-        obs = envs.env_method('reset')
-        for _ in range(all_args.total_steps//all_args.num_workers):
-            env_actions = []
-            save_actions = []
+        for worker_num in range(all_args.num_workers):
+            if dones[worker_num]:
+                obs[worker_num] = envs.env_method('reset',indices = worker_num)[0]
+            geoms = envs.env_method('get_geoms',True,indices = worker_num)[0]
+            topo_obs = get_topological_representation(geoms).astype(np.int32)
 
-            for worker_num in range(all_args.num_workers):
-                if dones[worker_num]:
-                    obs[worker_num] = envs.env_method('reset',indices = worker_num)[0]
-                geoms = envs.env_method('get_geoms',True,indices = worker_num)[0]
-                topo_obs = get_topological_representation(geoms).astype(np.int32)
-
-                # print(topo_obs)
-                while True:
-                    try:
-                        t = RopeTopology(topo_obs,check_validity=False)
-                        break
-                    except InvalidTopology as e:
-                        obs[worker_num] = envs.env_method('reset',indices=worker_num)
-                        geoms = envs.env_method('get_geoms',True,indices = worker_num)[0]
-                        topo_obs = get_topological_representation(geoms).astype(np.int32)
-                        # # envs.render()
-                        # print(topo_obs)
-                        # get_topological_representation(geoms).astype(np.int32)
-                        # raise e
-                plan = find_topological_path(t,trefoil_knot,max(trefoil_knot.size,t.size))
-                action = plan[1].action
-                while len(plan) == 0:
-                    obs[worker_num] = envs.env_method('reset',indices=worker_num)
+            # print(topo_obs)
+            while True:
+                try:
+                    t = RopeTopology(topo_obs,check_validity=False)
+                    break
+                except InvalidTopology as e:
+                    obs[worker_num] = envs.env_method('reset',indices=worker_num)[0]
                     geoms = envs.env_method('get_geoms',True,indices = worker_num)[0]
                     topo_obs = get_topological_representation(geoms).astype(np.int32)
-                    t = RopeTopology(topo_obs,check_validity=False)
-                    plan = find_topological_path(t,trefoil_knot,max(trefoil_knot.size,t.size))
-                    action = plan[1].action      
+                    # # envs.render()
+                    # print(topo_obs)
+                    # get_topological_representation(geoms).astype(np.int32)
+                    # raise e
+            plan = find_topological_path(t,trefoil_knot,max(trefoil_knot.size,t.size))
+            action = plan[1].action
+            while len(plan) == 0:
+                obs[worker_num] = envs.env_method('reset',indices = worker_num)[0]
+                geoms = envs.env_method('get_geoms',True,indices = worker_num)[0]
+                topo_obs = get_topological_representation(geoms).astype(np.int32)
+                t = RopeTopology(topo_obs,check_validity=False)
+                plan = find_topological_path(t,trefoil_knot,max(trefoil_knot.size,t.size))
+                action = plan[1].action      
 
 
-                if action[0] == "+C":
-                    pick_idx,mid_region,place_region = topo_to_geometry_add_C(t,action,obs[worker_num])
-                elif action[0] == "-C":
-                    pick_idx,mid_region,place_region = topo_to_geometry_remove_C(t,action,obs[worker_num])
+            if action[0] == "+C":
+                pick_idx,mid_region,place_region = topo_to_geometry_add_C(t,action,obs[worker_num])
+            elif action[0] == "-C":
+                pick_idx,mid_region,place_region = topo_to_geometry_remove_C(t,action,obs[worker_num])
 
-                p = np.vstack([np.zeros((1,2)),obs[worker_num]['shape'].T])
+            p = np.vstack([np.zeros((1,2)),obs[worker_num]['shape'].T])
 
-                place_pos = np.mean(place_region,axis=0)
-                if mid_region is None:
-                    mid_region = ((p[pick_idx,:] + place_pos)/2).reshape([1,2])
-                mid_pos = np.mean(mid_region,axis=0)
+            place_pos = np.mean(place_region,axis=0)
+            if mid_region is None:
+                mid_region = ((p[pick_idx,:] + place_pos)/2).reshape([1,2])
+            mid_pos = np.mean(mid_region,axis=0)
 
-                pick_norm = pick_idx/(p.shape[0]-1)
-                delta_mid = mid_pos - p[pick_idx,:2].reshape([1,2])
-                delta_end = place_pos - p[pick_idx,:2].reshape([1,2])
+            pick_norm = pick_idx/(p.shape[0]-1)
+            delta_mid = mid_pos - p[pick_idx,:2].reshape([1,2])
+            delta_end = place_pos - p[pick_idx,:2].reshape([1,2])
 
-                env_actions.append([pick_norm,*delta_mid.flatten().tolist(),*delta_end.flatten().tolist()])
-                save_actions.append([action[0],*env_actions[-1]])
-
-
-                # plt.clf()
-                # plt.plot(p[:,0],p[:,1])
-                # plt.fill(place_region[:,0],place_region[:,1],'b')
-                # if mid_region is not None:
-                #     plt.fill(mid_region[:,0],mid_region[:,1],'r')
-                # waypoints = np.vstack([p[pick_idx,:],p[pick_idx,:].reshape([1,2])+np.array(env_actions[-1][1:]).reshape([-1,2])])
-                # plt.plot(waypoints[:,0],waypoints[:,1],'k-')
-                # plt.draw()
-                # plt.pause(1e-1)
+            env_actions.append([pick_norm,*delta_mid.flatten().tolist(),*delta_end.flatten().tolist()])
+            save_actions.append([action[0],*env_actions[-1]])
 
 
-            _,rews,dones,info = envs.step(env_actions)
-            new_obs = envs.env_method('get_obs')
-            for i in range(len(obs)):
-                pickle.dump({
-                    'obs': obs[i],
-                    'action': save_actions[i],
-                    'reward': rews[i],
-                    'next_obs': new_obs[i]
-                },pkl_file)
+            # plt.clf()
+            # plt.plot(p[:,0],p[:,1])
+            # plt.fill(place_region[:,0],place_region[:,1],'b')
+            # if mid_region is not None:
+            #     plt.fill(mid_region[:,0],mid_region[:,1],'r')
+            # waypoints = np.vstack([p[pick_idx,:],p[pick_idx,:].reshape([1,2])+np.array(env_actions[-1][1:]).reshape([-1,2])])
+            # plt.plot(waypoints[:,0],waypoints[:,1],'k-')
+            # plt.draw()
+            # plt.pause(1e-1)
 
-            obs = deepcopy(new_obs)
 
+        _,rews,dones,info = envs.step(env_actions)
+        new_obs = envs.env_method('get_obs')
+        data['obs'].extend(obs)
+        data['action'].extend(save_actions)
+        data['reward'].extend(rews)
+        data['next_obs'].extend(new_obs)
+        # for i in range(len(obs)):
+        #     pickle.dump({
+        #         'obs': obs[i],
+        #         'action': save_actions[i],
+        #         'reward': rews[i],
+        #         'next_obs': new_obs[i]
+        #     },pkl_file)
+
+        obs = deepcopy(new_obs)
+    with open(all_args.save_name,'ab') as pkl_file:
+        pickle.dump(data,pkl_file)
     envs.close()
 
  

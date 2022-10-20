@@ -664,14 +664,16 @@ def get_topological_representation(positions):
             if intersect(positions[i],positions[i+1],positions[j],positions[j+1]):
                 intersections.append([i,j])
                 intersections.append([j,i])
-                intersect(positions[i],positions[i+1],positions[j],positions[j+1])
 
     intersections.sort(key = lambda a:a[0])
 
     topo = np.zeros((4,len(intersections)))
     for i in range(len(intersections)):
         matching_intersect = intersections.index(intersections[i][::-1])
-        is_over = positions[intersections[i][0]][1] > positions[intersections[i][1]][1]
+        if np.round(positions[intersections[i][0]][1] - positions[intersections[i][1]][1],3) == 0:
+            is_over = positions[intersections[i][0]+1][1] > positions[intersections[i][1]+1][1]
+        else:
+            is_over = positions[intersections[i][0]][1] > positions[intersections[i][1]][1]
         
         under_vect = positions[intersections[i][0]+1] - positions[intersections[i][0]]
         over_vect = positions[intersections[i][1]+1] - positions[intersections[i][1]]

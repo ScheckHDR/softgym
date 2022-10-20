@@ -971,7 +971,6 @@ def find_topological_path(start:RopeTopology,end:RopeTopology,max_rep_size = np.
     return path
     
 
-
 if __name__ == '__main__':
     t = np.array([
         [ 0, 1, 2, 3, 4, 5],

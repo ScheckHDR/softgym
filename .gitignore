@@ -25,3 +25,5 @@ miscTesting
 output/
 wandb/
 lightning_logs
+Datasets/
+

@@ -11,11 +11,38 @@ import torch
 from torch.utils.data import DataLoader, Dataset
 from CustAlgs.CQL import CQL
 
+from CustAlgs.policy import CustPolicy
+import gym
+from gym.spaces import Box, Discrete, Dict
+
+class FakeEnv():
+    def __init__(self,obs,action):
+
+        def get_space(val):
+            if isinstance(val,dict):
+                pass
+            else:
+                val = np.array(val).flatten()
+                return Box(-np.ones_like(val),np.ones_like(val))
+        
+        self.action_space = get_space(action)
+
+        if isinstance(obs,dict):
+            pass
+        else:
+            obs = 
+
+        
+
 
 class RopeDataset(Dataset):
-    def __init__(self,data_file,goal_topology = None,size=None):
+    def __init__(self,data_file,goal_topology = None,size=None,action_types=None):
         with open(data_file,'rb') as f:
             self.df = pd.DataFrame(pickle.load(f))
+        if action_types is not None:
+            self.df = self.df.loc[self.df["action"][0] in action_types]
+            for i in len(action_types):
+                self.df.loc[self.df["action"][0] == action_types[i]] = i
         if size is not None:
             self.df = self.df.loc[:size+1]
         if goal_topology is not None:
@@ -83,5 +110,5 @@ if __name__ == '__main__':
 
     data = RopeDataset(args.dataset_path,goal_topology,1000)
     # print(sum(df['reward'] == 0))
-    model = CQL(data)
+    model = CQL(None,data,CustPolicy)
     model.train()

@@ -5,34 +5,13 @@ import pandas as pd
 import pickle
 from softgym.utils.topology import get_topological_representation
 from tqdm import tqdm
-import time
 
 import torch
 from torch.utils.data import DataLoader, Dataset
-from CustAlgs.CQL import CQL
+# from CustAlgs.CQL import CQL
 
-from CustAlgs.policy import CustPolicy
-import gym
-from gym.spaces import Box, Discrete, Dict
-
-class FakeEnv():
-    def __init__(self,obs,action):
-
-        def get_space(val):
-            if isinstance(val,dict):
-                pass
-            else:
-                val = np.array(val).flatten()
-                return Box(-np.ones_like(val),np.ones_like(val))
-        
-        self.action_space = get_space(action)
-
-        if isinstance(obs,dict):
-            pass
-        else:
-            obs = 
-
-        
+from offlinerl.algo.modelfree.cql import AlgoTrainer
+from offlinerl.algo.modelfree.cql import algo_init
 
 
 class RopeDataset(Dataset):
@@ -65,8 +44,10 @@ def topology_from_obs(obs):
 
 
 
-def train(dataset):
-    pass
+def train(dataset,**kwargs):
+    alg_init = algo_init(kwargs)
+    trainer = AlgoTrainer(alg_init,kwargs)
+    trained_policy = trainer.train(dataset,None,lambda *args,**kwargs:None)
 
 
 def recompute_rewards(dataset,goal_topology):
@@ -108,7 +89,34 @@ if __name__ == '__main__':
         [1,1]
     ])
 
-    data = RopeDataset(args.dataset_path,goal_topology,1000)
+    data = RopeDataset(args.dataset_path,goal_topology,1000,['+C'])
     # print(sum(df['reward'] == 0))
-    model = CQL(None,data,CustPolicy)
-    model.train()
+
+    train(
+        data,
+        seed=args.seed,
+        obs_shape=data.df.obs[0].shape,
+        action_shape=data.df.action[0].shape,
+        layer_num=2,
+        hidden_layer_size=128,
+        device='cuda' if torch.cuda.is_available() else 'cpu',
+        actor_lr=1e-3,
+        critic_lr=1e-3,
+        use_automatic_entropy_tuning=False,
+        target_entropy=1e-3,# Might only be used if above is True
+        lagrange_thresh=-1, #Might disable it.
+        discrete=False,
+        policy_bs_steps=0,
+        type_q_backup=None, # {max,min,medium}
+        reward_scale=1,
+        discount=0.9,
+        num_random=32, # ???
+        min_q_version=None, #???
+        temp=0.1,#???
+        min_q_weight=1, #???
+        explore=0,#???
+        soft_target_tau=5e-6,#???
+        max_epoch=100,
+        steps_per_epoch=5,#???
+        batch_size=64
+    )

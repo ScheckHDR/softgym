@@ -5,16 +5,21 @@ used to base this file off of.
 
 import copy
 import numpy as np
-from typing import List, Union, Dict, Optional
+from typing import Callable, List, Union, Dict, Optional
 import pandas as pd
 
 import torch
 import torch.nn as nn
 from torch.distributions import Normal
+from torch.utils.data.dataloader import DataLoader
 
-class CustExtractor:
 
-    def __init__(self, sample_obs ,out_dim: int = 512):
+
+
+class CustExtractor(nn.Module):
+
+    def __init__(self, sample_obs ,out_dim: int = 512,*args,**kwargs):
+        super().__init__()
 
         self.cnn = nn.Sequential(
             # nn.Identity()
@@ -30,7 +35,7 @@ class CustExtractor:
 
         # Compute shape by doing one forward pass
         with torch.no_grad():
-            test = torch.as_tensor(sample_obs['cross'].sample()).unsqueeze(0).float()
+            test = torch.as_tensor(sample_obs['cross']).unsqueeze(0).unsqueeze(0).float()
             n_flatten = self.cnn(test).shape[1] + np.prod(sample_obs['tail'].shape) + np.prod(sample_obs['shape'].shape)
 
         self.linear = nn.Sequential(nn.Linear(n_flatten, out_dim), nn.ReLU())
@@ -38,13 +43,16 @@ class CustExtractor:
         
 
     def forward(self, observations: torch.Tensor) -> torch.Tensor:
-        cnn_result = self.cnn(observations['cross'])
+        cnn_result = self.cnn(observations['cross'].unsqueeze(1).float())
         # print(observations['cross'].shape)
         # print(f'tail:{observations["tail"].flatten(1).shape}')
         # print(f'shape: {observations["shape"].flatten(1).shape}')
         # print(f'cnn: {cnn_result.shape}')
-        lin_input = torch.concat([cnn_result,observations['tail'].flatten(1),observations['shape'].flatten(1)],dim=1)
+        lin_input = torch.cat([cnn_result,observations['tail'].flatten(1).float(),observations['shape'].flatten(1).float()],dim=1)
         return self.linear(lin_input)
+
+    def __get_item__(self,key):
+        return (self.cnn[:] + self.linear[:])[key]
 
 class Critic(nn.Module):
     def __init__(
@@ -63,8 +71,11 @@ class Critic(nn.Module):
     ):
         logits = self.extractor(state)
 
-        logits_a = torch.cat([logits,action],dim=1)
+        logits_a = torch.cat([logits,action],dim=1).float()
         return self.Q(logits_a)
+
+    def __get_item__(self,key):
+        return (self.extractor[:] + self.Q[:])[key]
 
 class ActorProb(nn.Module):
     def __init__(
@@ -73,13 +84,14 @@ class ActorProb(nn.Module):
         network:Optional[nn.Module] = None
     ):
         super().__init__()
-        if network is not None:
-            self.net = torch.cat([state_extractor,network])
-        else:
-            self.net = state_extractor
+        self.extractor = state_extractor
+        self.net = network
+
+        self.sigma = nn.Parameter(torch.zeros(1,network[-2].out_features))
 
     def forward(self,obs) -> Normal:
-        logits = self.net(obs)
+        s = self.extractor(obs)
+        logits = self.net(s)
 
         # TODO: Something about an optional conditioned sigma.
 
@@ -94,9 +106,27 @@ class ActorProb(nn.Module):
         log_prob = normal.log_prob(actions)
         return log_prob.sum(-1)
 
+    def __getitem__(self,key):
+        return (self.extractor[:] + self.network[:])[key]
+
 class MLP(nn.Module):
-    def __init__(self):
-        pass
+    def __init__(self,layer_sizes,mid_activation_func=nn.ReLU,final_activation_func=nn.Identity,*args,**kwargs):
+        super().__init__()
+        assert len(layer_sizes) > 1, f'Number of layers (including input and output) must be at least 2.'
+         
+        layers = []
+        for i in range(len(layer_sizes)-1):
+            layers.extend([nn.Linear(layer_sizes[i],layer_sizes[i+1]),mid_activation_func()])
+        layers[-1] = final_activation_func()
+
+        self.net = nn.Sequential(*layers)
+
+    def forward(self,x):
+        return self.net(x)
+
+    def __getitem__(self,key):
+        return self.net[key]
+        
     
 
 
@@ -105,22 +135,32 @@ class CQLTrainer:
         self,
         actor_kwargs:Dict,
         critic_kwargs:List[Dict], # List so that we can have multiple critics.
+        sample_data,
     ):
         if isinstance(critic_kwargs,Dict):
             critic_kwargs = [critic_kwargs]
 
+        self.critic_kwargs = critic_kwargs
         self.critics = []
         self.target_critics = []
         for args in critic_kwargs:
-            extractor = CustExtractor()
-            net = MLP(**args)
+            extractor_final = args.get("extractor_final_size",512)
+            extractor = CustExtractor(sample_data["obs"],extractor_final)
+            layer_sizes = args["hidden_layers"]
+            layer_sizes.insert(0,extractor_final + len(sample_data["action"]))
+            layer_sizes.append(1)
+            net = MLP(layer_sizes,**args)
             critic = Critic(extractor,net)
             self.critics.append(critic)
             self.target_critics.append(copy.deepcopy(critic))
 
-        actor_extractor = CustExtractor()
-        net = MLP(**actor_kwargs)
-        self.actor = ActorProb(actor_extractor,net)
+        extractor_final = actor_kwargs.get("extractor_final_size",512)
+        actor_extractor = CustExtractor(sample_data["obs"],extractor_final)
+        layer_sizes = actor_kwargs["hidden_layers"]
+        layer_sizes.insert(0,extractor_final)
+        layer_sizes.append(len(sample_data["action"]))
+        actor_net = MLP(layer_sizes,**actor_kwargs)
+        self.actor = ActorProb(actor_extractor,actor_net)
 
     def forward(self,obs,reparam=True,return_log_prob=True):
         normal = self.actor(obs)
@@ -136,22 +176,48 @@ class CQLTrainer:
 
         return action,log_prob
 
+    def _get_policy_actions(self,obs,num_actions,network):
+        obs_temp = copy.deepcopy(obs)
+        if isinstance(obs,Dict):
+            for key in obs:
+                obs_temp[key] = rep_consecutive(obs_temp[key],num_actions)
+        else:
+            obs_temp = rep_consecutive(obs_temp,num_actions)
+
+        new_obs_actions,new_obs_log_pi = network(obs_temp,reparam=True,return_log_prob=True)
+        return new_obs_actions, new_obs_log_pi
+
+    def _get_tensor_values(self,obs,actions,network):
+        a_s = actions.shape[0]
+        o_s = obs["tail"].shape[0]
+        num_repeat = a_s//o_s
+
+        obs_temp = copy.deepcopy(obs)
+        if isinstance(obs,Dict):
+            for key in obs:
+                obs_temp[key] = rep_consecutive(obs_temp[key],num_repeat)
+        else:
+            obs_temp = rep_consecutive(obs_temp,num_repeat)
+
+        preds = network(obs_temp,actions)
+        preds = preds.view(o_s,num_repeat,1)
+        return preds
+
 
 
     def _train_mini_batch(self,batch:pd.DataFrame):
         
-        batch = torch.tensor(batch.values)
-
-        rewards = batch.reward
-        terminals = batch.done
-        obs = batch.obs
-        actions = batch.action
-        next_obs = batch.next_obs
+        rewards = torch.tensor(batch["reward"])
+        # terminals = torch.tensor(batch["done"])
+        terminals = torch.zeros_like(rewards)
+        obs = batch["obs"]
+        actions = torch.cat(batch["action"],dim=0).reshape(-1,5)
+        next_obs = batch["next_obs"]
 
         new_obs_action,log_pi = self.forward(obs)
         # Policy and alpha loss
         
-        # Alpha set it to 1 to make everything work. TODO: add entropy stuff.
+        # Alpha set to 1 as place holder for entropy stuff. TODO: add entropy stuff.
         alpha_loss = 0
         alpha = 1
 
@@ -204,3 +270,35 @@ class CQLTrainer:
 
         self._n_train_steps_total += 1
 
+    def train(
+        self,
+        train_dataset:DataLoader,
+        max_epochs:int,
+        batch_size:int,
+        val_dataset:DataLoader = None,
+        steps_per_epoch:int=np.inf, # To have something similar to the repo this code is based off of.
+        callback:Callable=lambda *args,**kwargs:None
+    ):
+        for epoch in range(max_epochs):
+            if steps_per_epoch == np.inf:
+                for train_batch in train_dataset:
+                    self._train_mini_batch(train_batch)
+            else:
+                for step in range(steps_per_epoch):
+                    train_batch = train_dataset.sample(batch_size)
+                    self._train_mini_batch(train_batch)
+
+
+########### Helper Functions
+def get_shape(obj):
+    if hasattr(obj,"shape"):
+        return obj.shape
+    
+    if isinstance(obj,Dict):
+        shapes = [get_shape(val) for val in obj.values()]
+            
+
+def rep_consecutive(obj:torch.Tensor,num_rep):
+    new_shape = [1] * (len(obj.shape)+1)
+    new_shape[1] = num_rep
+    return obj.unsqueeze(1).repeat(new_shape).view(obj.shape[0]*num_rep,*obj.shape[1:])

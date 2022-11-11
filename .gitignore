@@ -25,5 +25,5 @@ miscTesting
 output/
 wandb/
 lightning_logs
-Datasets/
-
+Datasets/*
+TEMP_SWEEP

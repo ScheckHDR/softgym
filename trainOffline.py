@@ -5,14 +5,41 @@ import pandas as pd
 import pickle
 from softgym.utils.topology import get_topological_representation
 from tqdm import tqdm
+from typing import List
 
 import torch
 from torch.utils.data import DataLoader, Dataset
 from CustAlgs.CQL import CQLTrainer
 
+import wandb
+
+def callback_list(callbacks):
+    if not isinstance(callbacks,List):
+        callbacks = [callbacks]
+
+    def foo(obj):
+        for c in callbacks:
+            c(obj)
+
+    return foo
 
 
+def log_callback(obj):
+    if "losses" in obj:
+        for key in obj["losses"]:
+            obj["losses"][key] = np.array(obj["losses"][key]).mean()
+        wandb.log(obj["losses"])
 
+def save_callback(path="./TEMP_SWEEP"):
+    best_val = np.inf
+    def foo(obj):
+        nonlocal best_val
+        val = abs(obj["losses"]["actor_validation_loss"])
+        if val < best_val:
+            best_val = val
+            torch.save(obj["models"],f"{path}/data2_batch_size{wandb.config.batch_size}_alr{wandb.config.actor_lr}_clr{wandb.config.critic_lr}_gamma{wandb.config.gamma}.pth")
+
+    return foo
 class RopeDataset(Dataset):
     def __init__(self,data_file,goal_topology = None,size=None,action_types=None):
         with open(data_file,'rb') as f:
@@ -59,26 +86,12 @@ def recompute_rewards(dataset,goal_topology):
     return dataset
 
 
-def get_args():
-    parser = argparse.ArgumentParser()
-
-    parser.add_argument('dataset_path',type=str)
 
 
-    args = parser.parse_args()
-
-    assert os.path.exists(args.dataset_path), f'Could not find dataset at {args.dataset_path}.'
-
-    return args
-
+    
 
 
 if __name__ == '__main__':
-    args = get_args()
-
-    
-
-    
     goal_topology = np.array([
         [0,1],
         [1,0],
@@ -86,58 +99,72 @@ if __name__ == '__main__':
         [1,1]
     ])
 
-    data = RopeDataset(args.dataset_path,goal_topology,1000,['+C'])
-    # print(sum(df['reward'] == 0))
 
-    # train(
-    #     data,
-    #     # seed=args.seed,
-    #     # obs_shape=data.df.obs[0].shape,
-    #     # action_shape=data.df.action[0].shape,
-    #     # layer_num=2,
-    #     # hidden_layer_size=128,
-    #     device='cuda' if torch.cuda.is_available() else 'cpu',
-    #     actor_lr=1e-3,
-    #     critic_lr=1e-3,
-    #     # use_automatic_entropy_tuning=False,
-    #     # target_entropy=1e-3,# Might only be used if above is True
-    #     # lagrange_thresh=-1, #Might disable it.
-    #     # discrete=False,
-    #     # policy_bs_steps=0,
-    #     # type_q_backup=None, # {max,min,medium}
-    #     # reward_scale=1,
-    #     gamma=0.9,
-    #     # num_random=32, # ???
-    #     # min_q_version=None, #???
-    #     # temp=0.1,#???
-    #     # min_q_weight=1, #???
-    #     # explore=0,#???
-    #     soft_target_tau=5e-6,#???
-    #     max_epoch=100,
-    #     # steps_per_epoch=5,#???
-    #     batch_size=64
-    # )
+    default_config = {
+        "batch_size" : 32,
+        "actor_lr" : 1e-3,
+        "critic_lr" : 1e-3,
+        "gamma" : 0.95,
+    }
+    run = wandb.init(
+        project="TODO",
+        config=default_config,
+        sync_tensorboard=True,
+        monitor_gym=False,
+        save_code=False
+    )
 
+    data = RopeDataset(
+        wandb.config.dataset_path,
+        goal_topology,
+        # size=1000,
+        action_types=['+C']
+    )
     actor_args = {
         "hidden_layers" : [128,128],
-        "device" : "cuda" if torch.cuda.is_available() else "cpu",
-        "gamma" : 0.9,
-        "lr" : 1e-3,
+        "lr" : wandb.config.actor_lr,
         "extractor_final_size" : 512,
     }
-    critic_args = [{
+    critic_args = {
         "hidden_layers" : [128,128],
-        "device" : "cuda" if torch.cuda.is_available() else "cpu",
-        "gamma" : 0.9,
-        "lr" : 1e-3,
-        "soft_target_tau" : 5e-6,
+        "lr" : wandb.config.critic_lr,
+        "tau" : wandb.config.tau,
         "extractor_final_size" : 512,
-    }]*2
+    }
 
     sample_data = data[0]
-    trainer = CQLTrainer(actor_args,critic_args,sample_data)
-    trainer.train(
-        DataLoader(data,32,shuffle=True),
-        100,
-        32
+    trainer = CQLTrainer(
+        actor_args,
+        critic_args,
+        sample_data,
+        gamma = 0.9,
+        device = 'cuda' if torch.cuda.is_available() else 'cpu'
     )
+
+    train_size = int(0.8 * len(data))
+    val_size = len(data) - train_size
+    train_dataset,val_dataset = torch.utils.data.random_split(data,[train_size,val_size])
+
+    cb = callback_list([
+        log_callback,
+        save_callback()
+    ])
+
+    actor,critics = trainer.train(
+        DataLoader(train_dataset,wandb.config.batch_size,shuffle=True),
+        wandb.config.max_epochs,
+        wandb.config.batch_size,
+        val_dataset=DataLoader(val_dataset,wandb.config.batch_size,shuffle=True),
+        callback=cb
+    )
+
+    del actor
+    del critics
+    run.finish()    
+
+
+
+    
+    # torch.save(actor,'./actor.model')
+    # for i in range(len(critics)):
+    #     torch.save(critics[i],f'./critic{i}.model')

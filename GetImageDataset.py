@@ -4,6 +4,7 @@ import numpy as np
 import multiprocessing as mp
 import matplotlib.pyplot as plt
 import pickle
+from tqdm import tqdm
 
 from softgym.envs.rope_knot import RopeKnotEnv
 
@@ -16,9 +17,10 @@ from softgym.utils.normalized_env import normalize
 import random
 import csv
 import sys
-from os.path import exists
+import os
 
 from typing import Tuple,List
+import cv2
 
 trefoil_knot = RopeTopology(np.array([
         [ 0, 1, 2, 3, 4, 5],
@@ -67,14 +69,17 @@ def topo_to_geometry_add_C(topo,action,obs) -> Tuple[int,np.ndarray,np.ndarray]:
         l = len(segment_idxs)
         if under_first:
             under_indices = segment_idxs[:l//2]
-            pick_idx = segment_idxs[-1]
+            pick_idxs = segment_idxs[l//2:]
+            # pick_idx = segment_idxs[-1]
         else:
             under_indices = segment_idxs[l//2:]
-            pick_idx = segment_idxs[0]
+            pick_idxs = segment_idxs[:l//2]
+            # pick_idx = segment_idxs[0]
         diameter = p[under_indices,:]
 
         place_region = np.vstack([get_arc(diameter[0,:],diameter[-1,:],sign > 0,100),diameter[::-1,:]])
         mid_region = np.vstack([get_arc(diameter[0,:],diameter[-1,:],sign < 0,100),diameter[::-1,:]])
+        pick_region = p[pick_idxs,:]
     
     else:
         over_idxs = topo.find_geometry_indices_matching_seg(over_seg,obs['cross'])
@@ -82,10 +87,12 @@ def topo_to_geometry_add_C(topo,action,obs) -> Tuple[int,np.ndarray,np.ndarray]:
 
         if over_seg in [0,topo.size]:
             if over_seg == 0:
-                pick_idx = 0
+                # pick_idx = 0
+                pick_idxs = over_idxs
             elif over_seg == topo.size:
-                pick_idx = over_idxs[-1]
-            
+                # pick_idx = over_idxs[-1]
+                pick_idxs = under_idxs
+            pick_region = p[pick_idxs,:]
             place_region_segs = topo.get_loop(under_seg,sign)
             place_region_idxs = []
             for s in place_region_segs:
@@ -93,43 +100,64 @@ def topo_to_geometry_add_C(topo,action,obs) -> Tuple[int,np.ndarray,np.ndarray]:
             place_region = p[place_region_idxs,:]
 
         else:
-            l_pick = len(over_idxs)
-            pick_idx = over_idxs[l_pick//2]
+            # l_pick = len(over_idxs)
+            # pick_idx = over_idxs[l_pick//2]
+            pick_idxs = over_idxs
+            pick_region = p[pick_idxs,:]
 
             l_place = len(under_idxs)
             place_region = p[l_place//2,:].reshape([1,2])
 
-    return pick_idx,mid_region,place_region
+    return random.choice(pick_idxs),pick_region,mid_region,place_region
 
 def topo_to_geometry_remove_C(topo,action,obs):
     p = np.vstack([np.zeros((1,2)),obs['shape'].T])
     seg = action[1][0]
     if seg == 0:
-        pick_idx = 0
         other_seg = 1
     elif seg == topo.size:
-        pick_idx = p.shape[0]-1
         other_seg = topo.size-1
-    else:
+    if seg not in [0,topo.size]:
         raise ValueError("Segment must be one of the two end segments of the rope.")
     
-    undo_idxs = topo.find_geometry_indices_matching_seg(other_seg,obs['cross'])
+    undo_idxs = topo.find_geometry_indices_matching_seg(other_seg,obs["cross"])
+    pick_idxs = topo.find_geometry_indices_matching_seg(seg,obs["cross"])
 
-    place_idx = undo_idxs[len(undo_idxs)//2]
-    place_region = p[place_idx,:].reshape([1,2])
+    # place_idx = undo_idxs[len(undo_idxs)//2]
+    # place_region = p[place_idx,:].reshape([1,2])
 
-    return pick_idx,None,place_region
+    return random.choice(pick_idxs),p[pick_idxs,:],None,p[undo_idxs,:]
 
 def main(env_kwargs,all_args):
+    w,h,s = 128,128,0.35
+    env_kwargs["camera_width"] = w
+    env_kwargs["camera_height"] = h
+    homography,_ = cv2.findHomography(
+        np.array([
+            [ s,-s,-s, s],
+            [-s,-s, s, s],
+            [ 1, 1, 1, 1],
+
+        ]).T,
+        np.array([
+            [0,w,w,0],
+            [0,0,h,h],
+            [1,1,1,1],
+        ]).T
+    )
+    os.makedirs(os.path.join(all_args.save_name,'plain'))
+    os.makedirs(os.path.join(all_args.save_name,'pick'))
+    os.makedirs(os.path.join(all_args.save_name,'mid'))
+    os.makedirs(os.path.join(all_args.save_name,'place'))
     # env = RopeKnotEnv(**env_kwargs)
     envs = SubprocVecEnv([lambda: RopeKnotEnv(goal_topology=trefoil_knot.rep,**env_kwargs)]*all_args.num_workers,'spawn')
-    data = {'obs':[],'action':[],'reward':[],'next_obs':[],'dones':[]}
+    data = {'plain':[],'pick_mask':[],'mid_mask':[],'place_mask':[],'action':[]}
     dones = [False]*all_args.num_workers
     obs = envs.env_method('reset')
     num_failed = 0
-    for _ in range(all_args.total_steps//all_args.num_workers):
+
+    for i in tqdm(range(all_args.total_steps//all_args.num_workers)):
         env_actions = []
-        save_actions = []
 
         for worker_num in range(all_args.num_workers):
             if dones[worker_num]:
@@ -166,53 +194,104 @@ def main(env_kwargs,all_args):
 
 
             if action[0] == "+C":
-                pick_idx,mid_region,place_region = topo_to_geometry_add_C(t,action,obs[worker_num])
+                pick_idx, pick_region,mid_region,place_region = topo_to_geometry_add_C(t,action,obs[worker_num])
             elif action[0] == "-C":
-                pick_idx,mid_region,place_region = topo_to_geometry_remove_C(t,action,obs[worker_num])
+                pick_idx, pick_region,mid_region,place_region = topo_to_geometry_remove_C(t,action,obs[worker_num])
+            
 
             p = np.vstack([np.zeros((1,2)),obs[worker_num]['shape'].T])
 
             place_pos = np.mean(place_region,axis=0)
+            invalid_mid = False
             if mid_region is None:
                 mid_region = ((p[pick_idx,:] + place_pos)/2).reshape([1,2])
-            mid_pos = np.mean(mid_region,axis=0)
+                invalid_mid = True
+            # mid_pos = np.mean(mid_region,axis=0)
+
+
+            frame = cv2.cvtColor(envs.env_method('render_no_gripper',indices=worker_num)[0][-h:,:w,:],cv2.COLOR_RGB2BGR)
+
+            pick_h = np.vstack([pick_region.T,np.ones(pick_region.shape[0])])
+            place_h = np.vstack([place_region.T,np.ones(place_region.shape[0])])
+            mid_h = np.vstack([mid_region.T,np.ones(mid_region.shape[0])])
+
+
+            tail = obs[worker_num]["tail"].flatten()
+            trans_mat = np.array([
+                [np.cos(tail[2]),np.sin(tail[2]),tail[0]],
+                [-np.sin(tail[2]),np.cos(tail[2]),tail[1]],
+                [0,0,1]
+            ])
+
+            pick_img_p = (homography @ trans_mat @ pick_h)[:2,:]
+            place_img_p = (homography @ trans_mat @ place_h)[:2,:]
+            mid_img_p = (homography @ trans_mat @ mid_h)[:2,:]
+            rope_points = homography @ trans_mat @ np.vstack([obs[worker_num]["shape"],np.ones(obs[worker_num]["shape"].shape[1])])
+            pick_frame = cv2.polylines(
+                np.zeros(frame.shape[:2],dtype=np.uint8),
+                [pick_img_p[:2,:].T.astype(np.int32)],
+                isClosed=False,
+                color=255,
+                # thickness=3
+            )
+            mid_frame = cv2.fillPoly(
+                np.zeros(frame.shape[:2],dtype=np.uint8),
+                [mid_img_p[:2,:].T.astype(np.int32)],
+                color=255,
+            )
+
+            place_frame = cv2.fillPoly(
+                np.zeros(frame.shape[:2],dtype=np.uint8),
+                [place_img_p.astype(np.int32).T],
+                color=255
+            )
+
+            # alpha = 0.4
+
+            # cv2.imshow(
+            #     f"all{worker_num}",
+            #     cv2.addWeighted(
+            #         cv2.addWeighted(
+            #             frame,
+            #             1,
+            #             cv2.bitwise_or(mid_frame,place_frame),
+            #             alpha,
+            #             0
+            #         ),
+            #         1,
+            #         pick_frame,
+            #         1,
+            #         0
+            #     )
+            # )
+            # cv2.waitKey(1000)
 
             pick_norm = pick_idx/(p.shape[0]-1)
+                
+            mid_pos = np.mean(mid_region,axis=0)
             delta_mid = mid_pos - p[pick_idx,:2].reshape([1,2])
             delta_end = place_pos - p[pick_idx,:2].reshape([1,2])
-
             env_actions.append([pick_norm,*delta_mid.flatten().tolist(),*delta_end.flatten().tolist()])
-            save_actions.append([action[0],*env_actions[-1]])
 
-
-            # plt.clf()
-            # plt.plot(p[:,0],p[:,1])
-            # plt.fill(place_region[:,0],place_region[:,1],'b')
-            # if mid_region is not None:
-            #     plt.fill(mid_region[:,0],mid_region[:,1],'r')
-            # waypoints = np.vstack([p[pick_idx,:],p[pick_idx,:].reshape([1,2])+np.array(env_actions[-1][1:]).reshape([-1,2])])
-            # plt.plot(waypoints[:,0],waypoints[:,1],'k-')
-            # plt.draw()
-            # plt.pause(1e-1)
-
+            plain_path = os.path.join(all_args.save_name,'plain',f'{i*all_args.num_workers + worker_num}.jpg')
+            cv2.imwrite(plain_path,frame)
+            pick_path = os.path.join(all_args.save_name,'pick',f'{i*all_args.num_workers + worker_num}.jpg')
+            cv2.imwrite(pick_path,pick_frame)
+            mid_path = os.path.join(all_args.save_name,'mid',f'{i*all_args.num_workers + worker_num}.jpg')
+            cv2.imwrite(mid_path,mid_frame)
+            place_path = os.path.join(all_args.save_name,'place',f'{i*all_args.num_workers + worker_num}.jpg')
+            cv2.imwrite(place_path,place_frame)
+            data['plain'].append(plain_path)
+            data['pick_mask'].append(pick_path)
+            data['mid_mask'].append(mid_path)
+            data['place_mask'].append(place_path)
 
         _,rews,dones,info = envs.step(env_actions)
-        new_obs = envs.env_method('get_obs')
-        # data['obs'].extend(obs)
-        # data['action'].extend(save_actions)
-        # data['reward'].extend(rews)
-        # data['next_obs'].extend(new_obs)
-        # data['dones'].extend(dones)
-        # for i in range(len(obs)):
-        #     pickle.dump({
-        #         'obs': obs[i],
-        #         'action': save_actions[i],
-        #         'reward': rews[i],
-        #         'next_obs': new_obs[i]
-        #     },pkl_file)
+        obs = envs.env_method('get_obs')
 
-        obs = deepcopy(new_obs)
-    with open(all_args.save_name,'ab') as pkl_file:
+
+
+    with open(os.path.join(all_args.save_name,'Data.pkl'),'ab') as pkl_file:
         pickle.dump(data,pkl_file)
     envs.close()
 
@@ -226,8 +305,8 @@ def get_args():
     parser = argparse.ArgumentParser()
     
     parser.add_argument('-headless', action='store_true', help='Whether to run the environment with headless rendering')
-    
-    parser.add_argument('--save_name',type=str,default='./Datasets/TEMP.pkl',help='The directory to place generated models.')
+
+    parser.add_argument('--save_name',type=str,default='./Datasets/TEMP_IMAGES',help='The directory to place generated models.')
     parser.add_argument('--num_workers',type=int,default=1,help='How many workers to run in parallel generating data for the model being trained.')
 
     # Environment options
@@ -241,10 +320,12 @@ def get_args():
 
     args = parser.parse_args()    
     args.render_mode = args.render_mode.lower()
+    args.ssave_name = os.path.splitext(args.save_name)[0]
 
     assert args.num_workers > 0, f'num_workers must be set to a positive integer. You entered {args.num_workers}.'
     assert args.horizon > 0, f'Horizon length must be a positive integer. You entered {args.horizon}.'
     assert args.render_mode in ('cloth','particle','both'), f'Render_mode must be from the set {{cloth, particle, both}}. You entered {args.render_mode}.'
+    # assert os.path.splitext(args.save_name)[-1] == ".pkl", f"Only supports .pkl files at the moment"
 
     return args
 
@@ -255,7 +336,7 @@ if __name__ == '__main__':
         'observation_mode'  : 'key_point',
         'action_mode'       : 'picker_trajectory',
         'num_picker'        : 1,
-        'render'            : not args.headless,
+        'render'            : True,
         'headless'          : args.headless,
         'horizon'           : args.horizon,
         'action_repeat'     : 1,

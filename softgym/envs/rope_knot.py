@@ -250,7 +250,6 @@ class RopeKnotEnv(RopeNewEnv):
             ]
         )
 
-        # heights = np.transpose(pyflex.get_positions().reshape((-1, 4))[:,1])
         rel_positions_h = np.concatenate(
             (
                 np.insert(rope['shape'][0,:],0,0).reshape((1,-1)),
@@ -268,51 +267,16 @@ class RopeKnotEnv(RopeNewEnv):
 
         waypoints_rel_h = np.vstack([waypoints_rel[0,:],np.zeros([1,waypoints_rel.shape[1]]),waypoints_rel[1,:],np.zeros([1,waypoints_rel.shape[1]])]) # Making last row zeros instead of ones for the homogeneous as the ones will come from the addition on next line.
         waypoints_h = pick_coords_rel_h + waypoints_rel_h
-        # place_coords_rel_h = pick_coords_rel_h + np.array([action[1],0,action[2],0])
 
         pick_coords = (T_mat @ pick_coords_rel_h)[0:3]
         waypoint_coords = (T_mat @ waypoints_h)[0:3]
 
-        # pos = pyflex.get_positions().reshape((-1, 4))
-        # print(f'frame: {rope_frame}')
-        # print(f'pick: {pick_coords}, should be {pos[pick_idx,:3]}')
-        # print(f'place_h :{place_coords_rel_h}')
-        # print(f'place:{place_coords}')
-        # print('-'*50)
-
         traj = np.expand_dims(simple_trajectory(np.hstack([pick_coords,waypoint_coords]).T,height=0.1,num_points_per_leg=50),0) # only a single picker
         traj[:,:,0] *= -1
-        # traj = [self.trajectory_gen_funcs[traj_index](pick_coords,place_coords,num_points=150)]
-        # traj_action = np.concatenate(traj)
-        # traj_action = traj_action.reshape((self.num_picker,int(traj_action.size/3/self.num_picker),3))
+
         self.action_tool.step(traj,renderer=self.render if not self.headless else lambda *args, **kwargs : None)
 
 
-        # if self.action_mode == 'picker_trajectory':
-        #     trajectories = []
-        #     for picker in range(self.num_picker):
-        #         pick_idx = round(action[0] * (heights.shape[0]-1))
-        #         pick_coords_rel = pos[:,pick_idx]
-        #         place_coords_rel = pick_coords_rel + np.array([[action[1]],[action[2]],[0]])
-
-        #         pick_coords = r_mat @ np.array([[pick_coords_rel[0]],[pick_coords_rel[1]],[1]])
-        #         pick_coords[2] = pick_coords_rel[1]       
-
-        #         place_coords = r_mat @ place_coords_rel
-        #         place_coords[2] = place_coords_rel[1]
-
-        #         print(f'frame: {rope_frame}')
-        #         print(f'pick: {pick_coords}, should be {pos[pick_idx,:3]}')
-        #         print(f'place:{place_coords}')
-        #         print('-'*50)
-
-        #         trajectories.append(self.trajectory_gen_funcs[traj_index](pick_coords,place_coords,num_points=150))
-        #     traj_action = np.concatenate(trajectories)
-        #     traj_action = traj_action.reshape((self.num_picker,int(traj_action.size/3/self.num_picker),3))
-        #     self.action_tool.step(traj_action,renderer=self.render if not self.headless else lambda *args, **kwargs : None)
-
-        # else:
-        #     raise NotImplementedError
         return
 
     def _get_obs(self):
@@ -329,3 +293,7 @@ class RopeKnotEnv(RopeNewEnv):
 
     def _get_info(self):
         return dict()
+
+    def render_no_gripper(self,mode='rgb_array'):
+        self.action_tool.step(np.array([1,1,1,1],ndmin=2),renderer = lambda *args,**kwargs : None)
+        return super().render(mode=mode)

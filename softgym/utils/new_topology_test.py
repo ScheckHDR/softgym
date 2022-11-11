@@ -1,17 +1,16 @@
+import random
 import numpy as np
 from copy import deepcopy
 from typing import Union, List, Tuple
 import matplotlib.pyplot as plt
 from queue import PriorityQueue, Queue
-from collections import deque
-import time
-# from accessify import private
-from softgym.utils.topology import get_topological_representation
+
+
 class InvalidTopology(Exception):
     pass
 
 
-
+########## Topological Representation
 class Segment:
     def __init__(self,segment_num:int,starts_over:bool,ends_over:bool):
         self.end_crossing:Union[None,"Crossing"] = None
@@ -489,11 +488,16 @@ class Crossing:
     @property
     def attached_segments(self):
         return [seg for seg in [self.over_in,self.over_out,self.under_in,self.under_out] if seg is not None]
-        # return [seg[0] for seg in self.attachment_points]    
 
 class RopeTopology:
-    def __init__(self,topo_np,check_validity=True):
-        if not RopeTopology.quick_check(topo_np):
+
+    SEGMENT_NUM = 0
+    CORRESPONDING = 1
+    OVER_UNDER = 2
+    CHIRALITY = 3
+    ############## Topology_constructors
+    def __init__(self,topo_np:np.ndarray,check_level:int=2):
+        if check_level > 0 and not RopeTopology.quick_check(topo_np):
             raise InvalidTopology("Representation failed initial check.")
         self._topology:np.ndarray = topo_np
 
@@ -523,7 +527,7 @@ class RopeTopology:
                 new_segment.attach_crossing(c,True)
 
                 # would have created a new region, check that this doesn't invalidate anything.
-                if check_validity:
+                if check_level >= 2:
                     for is_left in [True,False]:
                         test_crossing = c
                         prev_seg = new_segment
@@ -574,7 +578,96 @@ class RopeTopology:
         self.segments[-1].attach_crossing(prev_crossing,False)
         self.segments[-1].attach_crossing(self.crossings[-1],True)
 
-    def construct_geometry(self):
+
+        self.is_valid = check_level >= 2
+        self.has_geometry = False
+
+    @staticmethod
+    def from_geometry(geoms:np.ndarray,plane_normal:np.ndarray=np.array([0,0,1]),check_level:int=2) -> "RopeTopology":
+        '''
+        Creates a RopeTopology object from a geometric representation.
+        '''
+        raw_rep = RopeTopology.raw_from_geometry(geoms,plane_normal)
+        return RopeTopology(raw_rep,check_level=check_level)
+    
+    @staticmethod
+    def raw_from_geometry(geoms:np.ndarray,plane_normal:np.ndarray=np.array([0,1,0])) -> np.ndarray:
+        '''
+        Creates the raw topological representation from a geometric representation.
+        '''
+        assert geoms.shape[1] == 3, f'geoms must be an Nx3 matrix, not {geoms.shape}.'
+        assert plane_normal.size == 3, f'the plane_normal vector must be 3 elements long, not {plane_normal.size}.'
+        
+        # Find the intersections.
+        intersections = []
+        for i in range(geoms.shape[0]):
+            for j in range(i+2, geoms.shape[0]-2):
+                if _intersect(geoms[i,:].flatten(),geoms[i+1,:].flatten(),geoms[j,:].flatten(),geoms[j+1,:].flatten()):
+                    intersections.append([i,j])
+                    intersections.append([j,i])
+
+        # Check intersections and create representation.
+        topo = np.zeros((4,len(intersections)),dtype=np.int32)
+        for i in range(len(intersections)):
+            matching_intersect = intersections.index(intersections[i][::-1])
+
+            seg_height = np.dot(plane_normal,geoms[intersections[i][0]+1,:])/np.linalg.norm(plane_normal)
+            corr_height = np.dot(plane_normal,geoms[intersections[i][1]+1,:])/np.linalg.norm(plane_normal)
+            is_over = seg_height > corr_height
+
+            under_vect = geoms[intersections[i][0]+1,:] - geoms[intersections[i][0],:]
+            over_vect  = geoms[intersections[i][1]+1,:] - geoms[intersections[i][1],:]
+
+            if not is_over:
+                under_vect,over_vect = over_vect,under_vect
+            
+            cross_prod = np.cross(over_vect,under_vect)
+            chirality = np.dot(cross_prod,plane_normal) # Technically should be converting everything to unit vectors, but I think it should be fine since i just need +ve/-ve
+
+            topo[:,i] = np.array([[
+                i,
+                matching_intersect,
+                is_over * 2 - 1, # Converts bool to 1 or -1.
+                (chirality > 0) * 2 - 1 # Same as above.
+            ]])    
+
+        return topo     
+
+    @staticmethod
+    def random(num_crossings,check_level:int=2) -> "RopeTopology":
+        
+        topo = -np.ones((4,2 * num_crossings))
+        topo[RopeTopology.SEGMENT_NUM,:] = np.arange(2 * num_crossings)
+
+        for i in range(2 * num_crossings):
+            if topo[-1,i] == -1:
+                possible_matches = np.where(topo[RopeTopology.CHIRALITY] == -1)[0]
+                possible_matches = possible_matches[np.where(possible_matches != i)[0]]
+
+                j = random.choice(possible_matches)
+
+                topo[RopeTopology.CORRESPONDING,i] = j
+                topo[RopeTopology.CORRESPONDING,j] = i
+
+                is_over = random.choice([-1,1])
+                topo[RopeTopology.OVER_UNDER,i] = is_over
+                topo[RopeTopology.OVER_UNDER,j] = -is_over
+
+                chirality = random.choice([-1,1])
+                topo[RopeTopology.CHIRALITY,i] = chirality
+                topo[RopeTopology.CHIRALITY,j] = chirality
+
+        return RopeTopology(topo,check_level=check_level)
+
+
+    ############## Visualisation.
+    def construct_geometry(self) -> None:
+        '''
+        Generates a blocky geometric representation of the knot associated with this object.
+        '''
+        if not self.is_valid:
+            # should be fairly minimal overhead.
+            self.__init__(self.rep)
 
         def step(pos,length,theta):
             return np.round(pos + np.array([[np.cos(theta),-np.sin(theta)],[np.sin(theta),np.cos(theta)]]) @ np.array([length,0]),1)
@@ -647,57 +740,31 @@ class RopeTopology:
             else:
                 occupancy = np.vstack([seg.full_path for seg in self.segments if seg != segment and seg.path is not None])
             segment.create_geometry(occupancy)
-            # segment.plot()
-            # Check collisions
             if collides(segment.path,occupancy) or any([collides(segment.end_crossing.position,s.path) for s in self.segments]):
                 handle_collisions(segment,self.segments)
                 occupancy = self.crossings[0].position
-                # plt.clf()
-                # for seg in self.segments:
-                #     if seg.path is not None:
-                #         seg.plot()
-                       
-    def plot(self,ax = None,pick_segs = [],*args,**kwargs) -> None:
-        if isinstance(pick_segs,int):
-            pick_segs = [pick_segs]
+
+        self.has_geometry = True
+                              
+    def plot(self,ax:plt.Axes = None,segs_to_colour:List[int] = [],*args,**kwargs) -> None:
+        '''
+        Plots the geometry associated with this object.
+
+        params:
+        ax: The axes the geometry should be plotted on. Will use current axes if none provided.
+        segs_to_colour: Segment indexes that should be coloured red, all others will be blue.
+        '''
+        if not self.has_geometry:
+            self.construct_geometry()
+        
+        if isinstance(segs_to_colour,int):
+            segs_to_colour = [segs_to_colour]
         ax = ax or plt.gca()
         for segment in self.segments:
-            segment.plot(ax,'r-' if segment.segment_num in pick_segs else 'b-',*args,**kwargs)
+            segment.plot(ax,'r-' if segment.segment_num in segs_to_colour else 'b-',*args,**kwargs)
 
-    def get_loop(self,segment_num:int,on_left:bool) -> List[Segment]:
-        assert 0 <= segment_num <= self.size, f'Segment number {segment_num} is out of range.'
-
-        if self.size == 0:
-            return []
-        
-        segments = [self.segments[segment_num]]
-        prev_seg = self.segments[segment_num]
-        c = prev_seg.end_crossing
-        is_input = True
-        while True:
-            next_seg, was_output = c.get_side_segment(prev_seg,on_left,is_input)
-            if next_seg in segments:
-                break
-
-            # Including rope ends may complicate things for no added benefit, so skip it.
-            if next_seg.segment_num == 0:
-                prev_seg = next_seg
-                is_input = True
-                continue
-            elif next_seg.segment_num == self.size:
-                prev_seg = next_seg
-                is_input = False
-                continue
-
-            segments.append(next_seg)
-            is_input = was_output
-            c = next_seg.get_other_crossing(c)
-            prev_seg = next_seg
-        
-        return segments
     
-
-
+    ############# Topological Manipulation.   
     def add_R1(self,segment_num:int,over:int,sign:int) -> "RopeTopology":
         assert over in [-1,1],f''
         assert sign in [-1,1],f''
@@ -714,7 +781,7 @@ class RopeTopology:
 
         r1_rep = np.hstack([T,N])
         return RopeTopology(r1_rep[:,r1_rep[0,:].argsort()])
-
+    
     def add_C(self,over_ind:int,under_ind:int,sign:int,under_first:bool,return_raw:bool = False) -> Tuple["RopeTopology",List[int]]:
         assert over_ind in [0,self.size] or under_ind in [0,self.size], f'C moves require at least one of the affected indices to be the end of the rope.'         
         T = deepcopy(self.rep)
@@ -755,6 +822,7 @@ class RopeTopology:
             else:
                 raise InvalidTopology(f"Could not add C move. {self.rep} does not allow segment {over_ind} to be placed over segment {under_ind}, with sign {sign}.")
         return RopeTopology(r2_rep), over_segs
+    
     def remove_C(self,segment_num:int,return_raw:bool = False) -> Tuple["RopeTopology",List[int]]:
         assert segment_num in [0,self.size], f'segment_num must relate to the ends of the rope'
 
@@ -774,31 +842,97 @@ class RopeTopology:
             else:
                 raise InvalidTopology(f"Could not remove C move. {self.rep} does not allow {segment_num} to be moved.") # This should never occur.
         return RopeTopology(T)
+    
+    
+    ############# Equivalences
+    def __eq__(self,other:"RopeTopology") -> bool:
+        if isinstance(other,RopeTopology):
+            return np.all(self.rep == other.rep)
+        elif isinstance(other,np.ndarray):
+            return np.all(self.rep == other)
+        raise ValueError(f"Cannot compare type RopeTopology with type {type(other)}.")
+
+    @staticmethod
+    def is_equivalent(topo1:"RopeTopology",topo2:"RopeTopology",test_flipped:bool=True,test_reversed:bool=True) -> bool:
+        if not topo1 == topo2:
+            return False
+        if test_flipped and not topo1.get_flipped(check_level=0) == topo2:
+            return False
+        if test_reversed and not topo1.get_reversed(check_level=0) == topo2:
+            return False
+        if test_reversed and test_flipped and not topo1.get_reversed(check_level=0).get_flipped(check_level=0):
+            return False
+        return True
+
+    def get_flipped(self,check_level:int=2) -> "RopeTopology":
+        return RopeTopology(self.rep[RopeTopology.OVER_UNDER,:] * np.array([1,1,-1,1]).reshape((4,-1)),check_level=check_level)
+
+    def get_reversed(self,check_level:int=2) -> "RopeTopology":
+        reversed_rep = self.rep[:,::-1]
+        reversed_rep[RopeTopology.SEGMENT_NUM,:] = np.arange(self.size)
+        reversed_rep[RopeTopology.CORRESPONDING,:] = self.size - reversed_rep[RopeTopology.CORRESPONDING,:] - 1
+        return RopeTopology(reversed_rep,check_level=check_level)
+    
+    
+    ############# Access raw representation.
+    def corresponding(self,seg_num:int) -> int:
+        return self._topology[RopeTopology.CORRESPONDING,self._section_index(seg_num)]
+    
+    def upper_val(self,seg_num:int) -> int:
+        return self._topology[RopeTopology.OVER_UNDER,self._section_index(seg_num)]
+    
+    def chirality(self,seg_num:int) -> int:
+        return self._topology[RopeTopology.CHIRALITY,self._section_index(seg_num)]
+    
+    def is_upper(self,seg_num:int) -> bool:
+        return self.upper_val(self._section_index(seg_num)) > 0
+    
+    def _section_index(self,col:int) -> np.ndarray:
+        return np.where(self._topology[RopeTopology.SEGMENT_NUM,:] == col)[0][0]
+    
+    
+    ############# Misc.
     @staticmethod
     def quick_check(topo_np):
         for col in topo_np.T:
             if topo_np[1,col[1]] != col[0] or topo_np[2,col[1]] == col[2] or topo_np[3,col[1]] != col[3]:
                 return False
         return True
+    
+    def get_loop(self,segment_num:int,on_left:bool) -> List[Segment]:
+        '''
+        Finds the segments that create a closed region of space. Desired region indicated by starting at the segment [segment_num] and which side of the segment the region is on.
+        '''
+        assert 0 <= segment_num <= self.size, f'Segment number {segment_num} is out of range.'
 
+        if self.size == 0:
+            return []
+        
+        segments = [self.segments[segment_num]]
+        prev_seg = self.segments[segment_num]
+        c = prev_seg.end_crossing
+        is_input = True
+        while True:
+            next_seg, was_output = c.get_side_segment(prev_seg,on_left,is_input)
+            if next_seg in segments:
+                break
 
-    def corresponding(self,seg_num):
-        return self._topology[1,self._section_index(seg_num)]
-    def upper_val(self,seg_num):
-        return self._topology[2,self._section_index(seg_num)]
-    def sign(self,seg_num):
-        return self._topology[3,self._section_index(seg_num)]
-    def is_upper(self,seg_num):
-        return self.upper_val(self._section_index(seg_num)) > 0
-    def _section_index(self,col):
-        return np.where(self._topology[0,:] == col)[0][0]
+            # Including rope ends may complicate things for no added benefit, so skip it.
+            if next_seg.segment_num == 0:
+                prev_seg = next_seg
+                is_input = True
+                continue
+            elif next_seg.segment_num == self.size:
+                prev_seg = next_seg
+                is_input = False
+                continue
 
-    def __eq__(self,other) -> bool:
-        if isinstance(other,RopeTopology):
-            return np.all(self.rep == other.rep)
-        elif isinstance(other,np.ndarray):
-            return np.all(self.rep == other)
-        raise ValueError(f"Cannot compare type RopeTopology with type {type(other)}.")
+            segments.append(next_seg)
+            is_input = was_output
+            c = next_seg.get_other_crossing(c)
+            prev_seg = next_seg
+        
+        return segments
 
     def find_geometry_indices_matching_seg(self,segment_number,incidence_matrix) -> List[int]:
         if self.size == 0:
@@ -819,12 +953,13 @@ class RopeTopology:
 
     @property
     def size(self):
-        return self._topology.shape[1]
+        return deepcopy(self._topology.shape[1])
     @property
     def rep(self):
-        return self._topology
+        return deepcopy(self._topology)
 
 def find_grid_path(start,end,occupancy) -> np.ndarray:
+    # Helps to create the geometric representation from a geometric one.
 
     class node:
         def __init__(self,value,distance,parent=None):
@@ -873,7 +1008,9 @@ def find_grid_path(start,end,occupancy) -> np.ndarray:
         current = current.parent
     path.reverse()
     return np.vstack([*path]).reshape([-1,2])
-            
+
+
+####### Topological Planning
 class RopeTopologyNode:
     def __init__(self,value:RopeTopology,priority:int,parent:Union[None,RopeTopology]=None,action=None):
         self.value = value
@@ -897,7 +1034,6 @@ class RopeTopologyNode:
             i += 1
             t = self.parent
         return i
-
 
 def find_topological_path(start:RopeTopology,end:RopeTopology,max_rep_size = np.inf) -> List[RopeTopology]:
 
@@ -970,87 +1106,57 @@ def find_topological_path(start:RopeTopology,end:RopeTopology,max_rep_size = np.
     path.reverse()
     return path
     
+COMMON_KNOTS = {
+    "trivial_knot" : RopeTopology(np.empty((4,0))),
+    "trefoil_knot_U+" : RopeTopology(
+        np.array([
+            [ 0, 1, 2, 3, 4, 5],
+            [ 3, 4, 5, 0, 1, 2],
+            [-1, 1,-1, 1,-1, 1],
+            [ 1, 1, 1, 1, 1, 1]
+        ])
+    ),
+    "trefoil_knot_U-" : RopeTopology(
+        np.array([
+            [ 0, 1, 2, 3, 4, 5],
+            [ 3, 4, 5, 0, 1, 2],
+            [-1, 1,-1, 1,-1, 1],
+            [-1,-1,-1,-1,-1,-1]
+        ])
+    ),
+    "trefoil_knot_O+" : RopeTopology(
+        np.array([
+            [ 0, 1, 2, 3, 4, 5],
+            [ 3, 4, 5, 0, 1, 2],
+            [ 1,-1, 1,-1, 1,-1],
+            [ 1, 1, 1, 1, 1, 1]
+        ])
+    ),
+    "trefoil_knot_O-" : RopeTopology(
+        np.array([
+            [ 0, 1, 2, 3, 4, 5],
+            [ 3, 4, 5, 0, 1, 2],
+            [ 1,-1, 1,-1, 1,-1],
+            [-1,-1,-1,-1,-1,-1]
+        ])
+    ),
+}
+
+
+######################## Helper functions
+def _ccw(A,B,C):
+    # return (C.y-A.y) * (B.x-A.x) > (B.y-A.y) * (C.x-A.x)
+    return (C[2]-A[2]) * (B[0]-A[0]) > (B[2]-A[2]) * (C[0]-A[0])
+
+def _intersect(A,B,C,D):
+    # Return true if line segments AB and CD intersect
+    return _ccw(A,C,D) != _ccw(B,C,D) and _ccw(A,B,C) != _ccw(A,B,D)
+
 
 if __name__ == '__main__':
-    t = np.array([
-        [ 0, 1, 2, 3, 4, 5],
-        [ 2, 3, 0, 1, 5, 4],
-        [ 1, 1,-1,-1, 1,-1],
-        [-1, 1,-1, 1, 1, 1]
-    ])
-    # t = np.array([
-    #     [0,1],
-    #     [1,0],
-    #     [-1,1],
-    #     [1,1]
-    # ])
-    # t = np.array([
-    #     [0,1,2,3,4,5,6,7],
-    #     [1,0,5,6,7,2,3,4],
-    #     [-1,1,1,-1,-1,-1,1,1],
-    #     [-1,-1,-1,-1,1,-1,-1,1]
-    # ])
-    # t = np.array([
-    #     [ 0, 1, 2, 3, 4, 5, 6, 7, 8, 9,10,11],
-    #     [11, 4, 5, 8, 1, 2, 7, 6, 3,10, 9, 0],
-    #     [ 1, 1, 1, 1,-1,-1, 1,-1,-1, 1,-1,-1],
-    #     [-1, 1, 1,-1, 1, 1, 1, 1,-1, 1, 1,-1]
-    # ]) invalid
-    
-
-    # trivial_knot = RopeTopology(np.empty([4,0],dtype=np.int32))
-    # trefoil_knot = RopeTopology(np.array([
-    #     [ 0, 1, 2, 3, 4, 5],
-    #     [ 3, 4, 5, 0, 1, 2],
-    #     [ 1,-1, 1,-1, 1,-1],
-    #     [-1,-1,-1,-1,-1,-1]
-    # ],dtype=np.int32))
-
-    print(t)
-
-    # with open('geoms_test','rb') as f:
-    #     import pickle
-    #     geoms = pickle.load(f)
-    # plt.plot(geoms[:,0],geoms[:,2])
-    # plt.show()
-    # t = get_topological_representation(geoms).astype(np.int32)
-
-
+    t = COMMON_KNOTS["trefoil_knot_O-"]
     RopeTopology(t)
-    # topological_path = find_topological_path(trivial_knot,trefoil_knot)
 
-    # for n in topological_path:
-    #     print(f'rep:{n.value.rep}\naction:{n.action}')
-
-    # f, (ax1,ax2) = plt.subplots(1,2)
-    # trivial_knot.construct_geometry()
-    # trivial_knot.plot(ax1)
-    # trefoil_knot.construct_geometry()
-    # trefoil_knot.plot(ax2)
-
-    # plt.pause(2)
-
-    # for i in range(1,len(topological_path)):
-    #     ax1.clear()
-    #     ax2.clear()
-
-    #     type,action,after_segs = topological_path[i].action
-    #     pick_segs = action[0]
-    #     topological_path[i-1].value.construct_geometry()
-    #     topological_path[i-1].value.plot(ax1,pick_segs)
-    #     topological_path[i].value.construct_geometry()
-    #     topological_path[i].value.plot(ax2,after_segs)
-    #     plt.pause(2)
-
-    # R = RopeTopology(t)
-    # R.construct_geometry()
-    # R.plot(ax1)
-
-    # test_R = R.add_R1(0,1,1)
-    # test_R.construct_geometry()
-    # test_R.plot(ax2)
-
-    # plt.show()
 
 
 

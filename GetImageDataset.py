@@ -8,8 +8,8 @@ from tqdm import tqdm
 
 from softgym.envs.rope_knot import RopeKnotEnv
 
-from softgym.utils.new_topology_test import InvalidTopology, RopeTopology,find_topological_path
-from softgym.utils.topology import get_topological_representation
+from softgym.utils.topology import InvalidTopology, RopeTopology,find_topological_path
+# from softgym.utils.topology import get_topological_representation
 
 from stable_baselines3.common.vec_env.subproc_vec_env import SubprocVecEnv
 from softgym.utils.normalized_env import normalize

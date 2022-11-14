@@ -9,8 +9,8 @@ import gym
 from softgym.envs.rope_knot import RopeKnotEnv
 from softgym.utils.normalized_env import normalize
 
-from softgym.utils.new_topology_test import RopeTopology,RopeTopologyNode,find_topological_path
-from softgym.utils.topology import get_topological_representation
+from softgym.utils.topology import RopeTopology,RopeTopologyNode,find_topological_path
+# from softgym.utils.topology import get_topological_representation
 
 import random
 seed = 11

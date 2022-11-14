@@ -7,8 +7,8 @@ import pickle
 
 from softgym.envs.rope_knot import RopeKnotEnv
 
-from softgym.utils.new_topology_test import InvalidTopology, RopeTopology,find_topological_path
-from softgym.utils.topology import get_topological_representation, generate_random_topology
+from softgym.utils.topology import InvalidTopology, RopeTopology,find_topological_path
+# from softgym.utils.topology import get_topological_representation, generate_random_topology
 
 from stable_baselines3.common.vec_env.subproc_vec_env import SubprocVecEnv
 from softgym.utils.normalized_env import normalize
@@ -16,9 +16,10 @@ from softgym.utils.normalized_env import normalize
 import random
 import csv
 import sys
-from os.path import exists
+import os
 
 from typing import Tuple,List
+import cv2
 
 
 trefoil_knot = RopeTopology(np.array([
@@ -58,13 +59,13 @@ def get_arc(start,end,sign:bool,num_points:int):
 
     return coords
 
-def topo_to_geometry_add_C(topo,action,obs) -> Tuple[int,np.ndarray,np.ndarray]:
-    p = np.vstack([np.zeros((1,2)),obs['shape'].T])
+def topo_to_geometry_add_C(topo:RopeTopology,action) -> Tuple[int,np.ndarray,np.ndarray]:
+    p = topo.geometry
     mid_region = None
 
-    over_seg,under_seg,sign,under_first = action[1]
+    over_seg,under_seg,sign,under_first = action
     if over_seg == under_seg:
-        segment_idxs = topo.find_geometry_indices_matching_seg(over_seg,obs['cross'])
+        segment_idxs = topo.find_geometry_indices_matching_seg(over_seg)
         l = len(segment_idxs)
         if under_first:
             under_indices = segment_idxs[:l//2]
@@ -78,8 +79,8 @@ def topo_to_geometry_add_C(topo,action,obs) -> Tuple[int,np.ndarray,np.ndarray]:
         mid_region = np.vstack([get_arc(diameter[0,:],diameter[-1,:],sign < 0,100),diameter[::-1,:]])
     
     else:
-        over_idxs = topo.find_geometry_indices_matching_seg(over_seg,obs['cross'])
-        under_idxs = topo.find_geometry_indices_matching_seg(under_seg,obs['cross'])
+        over_idxs = topo.find_geometry_indices_matching_seg(over_seg)
+        under_idxs = topo.find_geometry_indices_matching_seg(under_seg)
 
         if over_seg in [0,topo.size]:
             if over_seg == 0:
@@ -90,7 +91,7 @@ def topo_to_geometry_add_C(topo,action,obs) -> Tuple[int,np.ndarray,np.ndarray]:
             place_region_segs = topo.get_loop(under_seg,sign)
             place_region_idxs = []
             for s in place_region_segs:
-                place_region_idxs.extend(topo.find_geometry_indices_matching_seg(s.segment_num,obs['cross']))
+                place_region_idxs.extend(topo.find_geometry_indices_matching_seg(s.segment_num))
             place_region = p[place_region_idxs,:]
 
         else:
@@ -131,11 +132,10 @@ def all_add_C(topo:RopeTopology) -> List[np.ndarray]:
                         try:
                             action_args = [over_seg,under_seg,sign,under_first]
                             test, _ = topo.add_C(*action_args,return_raw=True)
-
-                            if test not in added:
-                                added.append((test,action_args))
+                            added.append(action_args)
                         except InvalidTopology:
                             pass
+    return added
 
 def get_action(env:RopeKnotEnv,obs,done:bool):
     if done:
@@ -162,129 +162,138 @@ def get_action(env:RopeKnotEnv,obs,done:bool):
 
     return obs,topo_action,env_action,g_t
 
+def get_action_masks(frame,pick_region:np.ndarray,mid_region:np.ndarray,place_region:np.ndarray):
+    assert pick_region.shape[0] == 2, f'Matrix must be 2xN'
+    assert mid_region.shape[0] == 2, f'Matrix must be 2xN'
+    assert place_region.shape[0] == 2, f'Matrix must be 2xN'
 
+    pick_h = np.vstack([pick_region,np.ones(pick_region.shape[1])])
+    mid_h = np.vstack([mid_region,np.ones(mid_region.shape[1])])
+    place_h = np.vstack([place_region,np.ones(place_region.shape[1])])
+
+    pick_img_p = (homography @ pick_h)[:2,:]
+    mid_img_p = (homography @ mid_h)[:2,:]
+    place_img_p = (homography @ place_h)[:2,:]
+    
+    pick_frame = cv2.polylines(
+        np.zeros(frame.shape[:2],dtype=np.uint8),
+        [pick_img_p.T.astype(np.int32)],
+        isClosed=False,
+        color=255
+    )
+    mid_frame = cv2.fillPoly(
+        np.zeros(frame.shape[:2],dtype=np.uint8),
+        [mid_img_p.T.astype(np.int32)],
+        color=255
+    )
+    place_frame = cv2.fillPoly(
+        np.zeros(frame.shape[:2],dtype=np.uint8),
+        [place_img_p.T.astype(np.int32)],
+        color=255
+    )
+
+    return pick_frame, mid_frame, place_frame
+
+def save_images(root_path:str,img_num:int,plain_img:np.ndarray,pick_img:np.ndarray,mid_img:np.ndarray,place_img:np.ndarray):
+    plain_path = os.path.join(root_path,"plain",f"{img_num}.jpg")
+    pick_path = os.path.join(root_path,"pick",f"{img_num}.jpg")
+    mid_path = os.path.join(root_path,"mid",f"{img_num}.jpg")
+    place_path = os.path.join(root_path,"place",f"{img_num}.jpg")
+
+    cv2.imwrite(plain_img,plain_path)
+    cv2.imwrite(pick_img,pick_path)
+    cv2.imwrite(mid_img,mid_path)
+    cv2.imwrite(place_img,place_path)
+
+    return plain_path,pick_path,mid_path,place_path
+
+w,h,s = 128,128,0.35
+homography,_ = cv2.findHomography(
+    np.array([
+        [ s,-s,-s, s],
+        [-s,-s, s, s],
+        [ 1, 1, 1, 1],
+
+    ]).T,
+    np.array([
+        [0,w,w,0],
+        [0,0,h,h],
+        [1,1,1,1],
+    ]).T
+)
 def main(env_kwargs,all_args):
-    # env = RopeKnotEnv(**env_kwargs)
+    env_kwargs["camera_width"] = w
+    env_kwargs["camera_height"] = h
+
+    # envs = RopeKnotEnv(**env_kwargs)
     envs = SubprocVecEnv([lambda: RopeKnotEnv(goal_topology=trefoil_knot.rep,**env_kwargs)]*all_args.num_workers,'spawn')
     data = {
-        "obs":[],
-        "topo_action":[],
-        "env_action":[],
-        "reward":[],
-        "next_obs":[],
-        "dones":[]
+        "plain_path":[],
+        "pick_path":[],
+        "mid_path":[],
+        "place_path":[],
+        "Successful":[],
+        "pick_region":[],
+        "mid_region":[],
+        "place_region":[],
+        "topology":[]
     }
-    dones = [False]*all_args.num_workers
-    obs = envs.env_method("reset")
-    num_failed = 0
-    for _ in range(all_args.total_steps//all_args.num_workers):
-        env_actions = [None] * all_args.num_workers
-        topo_actions = [None] * all_args.num_workers
+    
+    envs.env_method("reset")
+    rope_reps = envs.env_method("get_obs")
 
-        
+    for step_num in range(all_args.total_steps//all_args.num_workers):
+        env_actions = []
+        topo_actions = [None]*all_args.num_workers
+        before_render = 1
+                  
         for worker_num in range(all_args.num_workers):
-            obs[worker_num],topo_actions[worker_num],env_actions[worker_num] = \
-                get_action(
-                    envs.get_attr("env",indices=worker_num)[0],
-                    obs[worker_num],
-                    dones[worker_num]
-                )
+
+            topo_actions[worker_num] = random.choice(all_add_C(rope_reps[worker_num]))
+            pick_idx, pick_region,mid_region,place_region = topo_to_geometry_add_C(rope_reps[worker_num],topo_actions[worker_num])
+            action_masks = get_action_masks(before_render[worker_num],pick_region,mid_region,place_region)
+
+            pick_norm = pick_idx/rope_reps[worker_num].rope_length
+            mid_pos = np.mean(mid_region,axis=0)
+            place_pos = np.mean(place_region,axis=0)
+
+            # TODO: Change so that it accounts for the reference frame
+            pick_act = pick_norm
+            mid_act = mid_pos
+            place_act = place_pos
+
+            env_actions.append([pick_act,*mid_act.flatten().tolist(),*place_act.flatten().tolist()])
+
+            plain_path,pick_path,mid_path,place_path = save_images(
+                all_args.save_name,
+                step_num*all_args.num_workers,
+                before_render[worker_num],
+                *action_masks
+            )
+
+            data["plain_path"].append(plain_path)
+            data["pick_path"].append(pick_path)
+            data["mid_path"].append(mid_path)
+            data["place_path"].append(place_path)
+            
+            data["pick_region"].append(pick_region)
+            data["mid_region"].append(mid_region)
+            data["place_region"].append(place_region)
+
+        envs.step(env_actions)
+        new_reps = RopeTopology.from_geometry(envs.env_method('get_geoms'))
+
+        successes = [None] * all_args.num_workers
+        for worker_num in range(all_args.num_workers):
+            successes[worker_num] = new_reps == rope_reps.add_C(*topo_actions[worker_num])
+        data["Topo_actions"].extend(topo_actions)
+        data["topology"].extend(rope_reps)
+
+        envs.env_method('generate_env_variation')
 
 
-        # renders_before = envs.env_method("render_no_gripper")
-        _,rews,dones,info = envs.step(env_actions)
-        new_obs = envs.env_method('get_obs')
-        # renders_after = envs.env_method("render_no_gripper")
-        data["obs"].extend(obs)
-        data["topo_action"].extend(topo_actions)
-        data["env_action"].extend(env_actions)
-        data["reward"].extend(rews)
-        data["next_obs"].extend(new_obs)
-        data["dones"].extend(dones)    
 
-
-        # for worker_num in range(all_args.num_workers):
-        #     if dones[worker_num]:
-        #         obs[worker_num] = envs.env_method('reset',indices = worker_num)[0]
-        #     geoms = envs.env_method('get_geoms',True,indices = worker_num)[0]
-        #     topo_obs = get_topological_representation(geoms).astype(np.int32)
-
-        #     # print(topo_obs)
-        #     while True:
-        #         try:
-        #             t = RopeTopology(topo_obs,check_validity=False)
-        #             break
-        #         except InvalidTopology as e:
-        #             num_failed += 1
-        #             print(f'Invalid. Resets: {num_failed}')
-        #             obs[worker_num] = envs.env_method('reset',indices=worker_num)[0]
-        #             geoms = envs.env_method('get_geoms',True,indices = worker_num)[0]
-        #             topo_obs = get_topological_representation(geoms).astype(np.int32)
-        #             # # envs.render()
-        #             # print(topo_obs)
-        #             # get_topological_representation(geoms).astype(np.int32)
-        #             # raise e
-        #     plan = find_topological_path(t,trefoil_knot,max(trefoil_knot.size,t.size))
-        #     action = plan[1].action
-        #     while len(plan) == 0:
-        #         num_failed += 1
-        #         print(f'Planning. Resets: {num_failed}')
-        #         obs[worker_num] = envs.env_method('reset',indices = worker_num)[0]
-        #         geoms = envs.env_method('get_geoms',True,indices = worker_num)[0]
-        #         topo_obs = get_topological_representation(geoms).astype(np.int32)
-        #         t = RopeTopology(topo_obs,check_validity=False)
-        #         plan = find_topological_path(t,trefoil_knot,max(trefoil_knot.size,t.size))
-        #         action = plan[1].action      
-
-
-        #     if action[0] == "+C":
-        #         pick_idx,mid_region,place_region = topo_to_geometry_add_C(t,action,obs[worker_num])
-        #     elif action[0] == "-C":
-        #         pick_idx,mid_region,place_region = topo_to_geometry_remove_C(t,action,obs[worker_num])
-
-        #     p = np.vstack([np.zeros((1,2)),obs[worker_num]['shape'].T])
-
-        #     place_pos = np.mean(place_region,axis=0)
-        #     if mid_region is None:
-        #         mid_region = ((p[pick_idx,:] + place_pos)/2).reshape([1,2])
-        #     mid_pos = np.mean(mid_region,axis=0)
-
-        #     pick_norm = pick_idx/(p.shape[0]-1)
-        #     delta_mid = mid_pos - p[pick_idx,:2].reshape([1,2])
-        #     delta_end = place_pos - p[pick_idx,:2].reshape([1,2])
-
-        #     env_actions.append([pick_norm,*delta_mid.flatten().tolist(),*delta_end.flatten().tolist()])
-        #     save_actions.append([action[0],*env_actions[-1]])
-
-
-            # plt.clf()
-            # plt.plot(p[:,0],p[:,1])
-            # plt.fill(place_region[:,0],place_region[:,1],'b')
-            # if mid_region is not None:
-            #     plt.fill(mid_region[:,0],mid_region[:,1],'r')
-            # waypoints = np.vstack([p[pick_idx,:],p[pick_idx,:].reshape([1,2])+np.array(env_actions[-1][1:]).reshape([-1,2])])
-            # plt.plot(waypoints[:,0],waypoints[:,1],'k-')
-            # plt.draw()
-            # plt.pause(1e-1)
-
-
-        _,rews,dones,info = envs.step(env_actions)
-        new_obs = envs.env_method('get_obs')
-        # data['obs'].extend(obs)
-        # data['action'].extend(save_actions)
-        # data['reward'].extend(rews)
-        # data['next_obs'].extend(new_obs)
-        # data['dones'].extend(dones)
-        # for i in range(len(obs)):
-        #     pickle.dump({
-        #         'obs': obs[i],
-        #         'action': save_actions[i],
-        #         'reward': rews[i],
-        #         'next_obs': new_obs[i]
-        #     },pkl_file)
-
-        obs = deepcopy(new_obs)
-    with open(all_args.save_name,'ab') as pkl_file:
+    with open(os.path.join(all_args.save_name,"Data.pkl"),"ab") as pkl_file:
         pickle.dump(data,pkl_file)
     envs.close()
 
@@ -327,7 +336,7 @@ if __name__ == '__main__':
         'observation_mode'  : 'key_point',
         'action_mode'       : 'picker_trajectory',
         'num_picker'        : 1,
-        'render'            : not args.headless,
+        'render'            : True,
         'headless'          : args.headless,
         'horizon'           : args.horizon,
         'action_repeat'     : 1,

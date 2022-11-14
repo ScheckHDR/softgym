@@ -14,7 +14,7 @@ from softgym.utils.trajectories import simple_trajectory
 import time
 
 def convert_topo_rep(topo,workspace,obs_spaces):
-    N = topo.shape[1]
+    N = topo.size
 
     # r = np.math.atan2(topo[1,0],topo[0,0])
     theta = np.math.atan2(topo[1,1] - topo[1,0],topo[0,1] - topo[0,0])
@@ -106,7 +106,7 @@ class RopeKnotEnv(RopeNewEnv):
         if goal_topology is not None:
             self.goal_configuration = deepcopy(goal_topology)
         else:
-            self.goal_configuration = deepcopy(generate_random_topology(self.goal_crossings))
+            self.goal_configuration = deepcopy(RopeTopology.random(self.goal_crossings))
         # print(self.goal_configuration)
               
     def _reset(self):
@@ -171,41 +171,42 @@ class RopeKnotEnv(RopeNewEnv):
         return geoms
 
     def get_topological_representation(self):
-        particle_pos = self.get_geoms(True)
+        # particle_pos = self.get_geoms(True)
         
-        topo_test = np.zeros((3,particle_pos.shape[0]))
-        intersections = []
-        for i in range(1,particle_pos.shape[0]):
-            for j in range (i+2,particle_pos.shape[0]):
+        # topo_test = np.zeros((3,particle_pos.shape[0]))
+        # intersections = []
+        # for i in range(1,particle_pos.shape[0]):
+        #     for j in range (i+2,particle_pos.shape[0]):
 
-                if intersect(particle_pos[i],particle_pos[i-1],particle_pos[j],particle_pos[j-1]):
-                    for k in range(j,particle_pos.shape[0]):
-                        # avoid possibility for two crossings to be associated with same geom
-                        # pushes secondary crossing onto later geom
-                        if topo_test[0,k] == 0:
-                            topo_test[1,i:] += 1
-                            topo_test[1,k:] += 1
-                            intersections.append([i,k])
-                            intersections.append([k,i])
-                            if particle_pos[i,1] > particle_pos[k,1]:
-                                topo_test[0,i] =  1
-                                topo_test[0,k] = -1
-                            else:
-                                topo_test[0,i] = -1
-                                topo_test[0,k] = 1
-                            break
+        #         if intersect(particle_pos[i],particle_pos[i-1],particle_pos[j],particle_pos[j-1]):
+        #             for k in range(j,particle_pos.shape[0]):
+        #                 # avoid possibility for two crossings to be associated with same geom
+        #                 # pushes secondary crossing onto later geom
+        #                 if topo_test[0,k] == 0:
+        #                     topo_test[1,i:] += 1
+        #                     topo_test[1,k:] += 1
+        #                     intersections.append([i,k])
+        #                     intersections.append([k,i])
+        #                     if particle_pos[i,1] > particle_pos[k,1]:
+        #                         topo_test[0,i] =  1
+        #                         topo_test[0,k] = -1
+        #                     else:
+        #                         topo_test[0,i] = -1
+        #                         topo_test[0,k] = 1
+        #                     break
 
         
-        if len(intersections) > 1:
-            intersections.sort(key = lambda a:a[0])
-            cross1 = np.argmax(topo_test[1,:] != 0)
-            for i in range(cross1,topo_test.shape[1]):
-                topo_test[2, i] = intersections.index(
-                    intersections[int(topo_test[1,i])-1][::-1])
+        # if len(intersections) > 1:
+        #     intersections.sort(key = lambda a:a[0])
+        #     cross1 = np.argmax(topo_test[1,:] != 0)
+        #     for i in range(cross1,topo_test.shape[1]):
+        #         topo_test[2, i] = intersections.index(
+        #             intersections[int(topo_test[1,i])-1][::-1])
             
-        full_rep = np.concatenate((np.transpose(particle_pos[:,[0,2]]),topo_test),axis=0)
+        # full_rep = np.concatenate((np.transpose(particle_pos[:,[0,2]]),topo_test),axis=0)
 
-        return full_rep
+        # return full_rep
+        return RopeTopology.from_geometry(self.get_geoms(),plane_normal=np.array([0,1,0]))
   
     def _is_done(self):
         current = self.get_topological_representation()
@@ -280,9 +281,7 @@ class RopeKnotEnv(RopeNewEnv):
         return
 
     def _get_obs(self):
-        topo = self.get_topological_representation().astype(float)
-
-        return convert_topo_rep(topo,self.workspace,self.observation_space)
+        return self.get_topological_representation()
 
     def get_obs(self):
         return self._get_obs()

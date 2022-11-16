@@ -320,7 +320,7 @@ def get_args():
 
     args = parser.parse_args()    
     args.render_mode = args.render_mode.lower()
-    args.ssave_name = os.path.splitext(args.save_name)[0]
+    args.save_name = os.path.splitext(args.save_name)[0]
 
     assert args.num_workers > 0, f'num_workers must be set to a positive integer. You entered {args.num_workers}.'
     assert args.horizon > 0, f'Horizon length must be a positive integer. You entered {args.horizon}.'

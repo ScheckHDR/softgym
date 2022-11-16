@@ -12,6 +12,7 @@ from gym.spaces import Box, Discrete, Dict
 from softgym.utils.trajectories import simple_trajectory
 
 import time
+import cv2
 
 def convert_topo_rep(topo,workspace,obs_spaces):
     N = topo.size
@@ -80,8 +81,6 @@ class RopeKnotEnv(RopeNewEnv):
 
         self.maximum_crossings = kwargs['maximum_crossings']
         self.goal_crossings = kwargs['goal_crossings']
-
-
 
         if self.action_mode == 'picker_trajectory':
             self.action_tool = PickerTraj(self.num_picker, picker_radius=self.picker_radius, picker_threshold=0.005, 
@@ -163,11 +162,9 @@ class RopeKnotEnv(RopeNewEnv):
         else:
             return -1
 
-    def get_geoms(self,correct_x:bool=False):
-        # flip x axis to match regular x-y coordinate system.
+    def get_geoms(self):
         geoms = np.array(pyflex.get_positions()).reshape([-1, 4])[:, :3]
-        if correct_x:
-            geoms[:,0] *= -1
+
         return geoms
 
     def get_topological_representation(self):
@@ -209,82 +206,63 @@ class RopeKnotEnv(RopeNewEnv):
         return RopeTopology.from_geometry(self.get_geoms(),plane_normal=np.array([0,1,0]))
   
     def _is_done(self):
-        current = self.get_topological_representation()
-        trimmed_crossings = np.trim_zeros(current[4,:],'f')
-        unique_ind = np.unique(trimmed_crossings,return_index=True)[1]
-        current_order = trimmed_crossings[sorted(unique_ind)]
-        current_over_under = current[2,np.where(current[2,:] != 0)[0]].astype(int)
-        
-        nz = np.nonzero(self.goal_configuration)  # Indices of all nonzero elements
-        goal = self.goal_configuration[nz[0].min():nz[0].max()+1,
-                        nz[1].min():nz[1].max()+1]
-        # flipped_goal = flip_topology(deepcopy(goal))
-        # reversed_goal = reverse_topology(deepcopy(goal))
-        # flip_reversed_goal = flip_topology(reverse_topology(deepcopy(goal)))
-
-        C = np.vstack((current_order,current_over_under))
-
-        G = goal[1:3,:]
-        # RG = reversed_goal[1:3,:]
-        # FG = flipped_goal[1:3,:]
-        # RFG = flip_reversed_goal[1:3,:]
-        if (np.all(C == G)):# \
-            # or (np.all(C == FG)) \
-            # or (np.all(C == RG)) \
-            # or (np.all(C == RFG)):
-            return True
-        else:
-            return False
+        return RopeTopology.is_equivalent(self.get_topological_representation(),self.goal_configuration,False,False)
         
     def _step(self, action):
-        rope = self._get_obs()
-        rope_frame = rope['tail']
+        # rope = self._get_obs()
+        # rope_frame = rope['tail']
 
-        theta = rope_frame[0,2]
+        # theta = rope_frame[0,2]
 
-        T_mat = np.array(
-            [
-                [np.math.cos(theta),0,np.math.sin(theta),rope_frame[0,0]],
-                [0,1,0,0],
-                [-np.math.sin(theta),0, np.math.cos(theta),rope_frame[0,1]],
-                [0,0,0,1]
-            ]
-        )
+        # T_mat = np.array(
+        #     [
+        #         [np.math.cos(theta),0,np.math.sin(theta),rope_frame[0,0]],
+        #         [0,1,0,0],
+        #         [-np.math.sin(theta),0, np.math.cos(theta),rope_frame[0,1]],
+        #         [0,0,0,1]
+        #     ]
+        # )
 
-        rel_positions_h = np.concatenate(
-            (
-                np.insert(rope['shape'][0,:],0,0).reshape((1,-1)),
-                np.zeros((1,rope['cross'].shape[-1])),
-                np.insert(rope['shape'][1,:],0,0).reshape((1,-1)),
-                np.ones((1,rope['cross'].shape[-1]))
-            ),
-            axis=0
-        ).reshape((4,-1))
+        # rel_positions_h = np.concatenate(
+        #     (
+        #         np.insert(rope['shape'][0,:],0,0).reshape((1,-1)),
+        #         np.zeros((1,rope['cross'].shape[-1])),
+        #         np.insert(rope['shape'][1,:],0,0).reshape((1,-1)),
+        #         np.ones((1,rope['cross'].shape[-1]))
+        #     ),
+        #     axis=0
+        # ).reshape((4,-1))
 
-        pick_idx = round(action[0] * (rel_positions_h.shape[1]-1))
-        pick_coords_rel_h = np.expand_dims(rel_positions_h[:,pick_idx],-1)
+        # pick_idx = round(action[0] * (rel_positions_h.shape[1]-1))
+        # pick_coords_rel_h = np.expand_dims(rel_positions_h[:,pick_idx],-1)
 
-        waypoints_rel = np.array(action[1:]).reshape([-1,2]).T
+        # waypoints_rel = np.array(action[1:]).reshape([-1,2]).T
 
-        waypoints_rel_h = np.vstack([waypoints_rel[0,:],np.zeros([1,waypoints_rel.shape[1]]),waypoints_rel[1,:],np.zeros([1,waypoints_rel.shape[1]])]) # Making last row zeros instead of ones for the homogeneous as the ones will come from the addition on next line.
-        waypoints_h = pick_coords_rel_h + waypoints_rel_h
+        # waypoints_rel_h = np.vstack([waypoints_rel[0,:],np.zeros([1,waypoints_rel.shape[1]]),waypoints_rel[1,:],np.zeros([1,waypoints_rel.shape[1]])]) # Making last row zeros instead of ones for the homogeneous as the ones will come from the addition on next line.
+        # waypoints_h = pick_coords_rel_h + waypoints_rel_h
 
-        pick_coords = (T_mat @ pick_coords_rel_h)[0:3]
-        waypoint_coords = (T_mat @ waypoints_h)[0:3]
+        # pick_coords = (T_mat @ pick_coords_rel_h)[0:3]
+        # waypoint_coords = (T_mat @ waypoints_h)[0:3]
 
-        traj = np.expand_dims(simple_trajectory(np.hstack([pick_coords,waypoint_coords]).T,height=0.1,num_points_per_leg=50),0) # only a single picker
-        traj[:,:,0] *= -1
+        geometry = self.get_geoms()
+        pick_idx = round(action[0]*(geometry.shape[0]-1))
+        pick_coords = geometry[pick_idx,:]
+        waypoint_coords = np.array(action[1:]).reshape([-1,2])
+        waypoint_coords = np.insert(waypoint_coords,1,np.zeros(waypoint_coords.shape[0]),axis=1)
+
+        traj = np.expand_dims(simple_trajectory(np.vstack([pick_coords,waypoint_coords]),height=0.1,num_points_per_leg=50),0) # only a single picker
 
         self.action_tool.step(traj,renderer=self.render if not self.headless else lambda *args, **kwargs : None)
 
-
-        return
+        return self.observation_space.sample(),None,None,None
 
     def _get_obs(self):
-        return self.get_topological_representation()
+        # return self.get_topological_representation()
+        return self.observation_space.sample()
 
     def get_obs(self):
-        return self._get_obs()
+        # return self._get_obs()
+        return self.observation_space.sample()
 
     def get_keypoints(self):
         particle_pos = self.get_geoms(True)
@@ -295,4 +273,4 @@ class RopeKnotEnv(RopeNewEnv):
 
     def render_no_gripper(self,mode='rgb_array'):
         self.action_tool.step(np.array([1,1,1,1],ndmin=2),renderer = lambda *args,**kwargs : None)
-        return super().render(mode=mode)
+        return cv2.cvtColor(super().render(mode=mode)[-self.camera_height:,:self.camera_width,:],cv2.COLOR_RGB2BGR)

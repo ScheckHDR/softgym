@@ -790,7 +790,7 @@ class RopeTopology:
         r1_rep = np.hstack([T,N])
         return RopeTopology(r1_rep[:,r1_rep[0,:].argsort()])
     
-    def add_C(self,over_ind:int,under_ind:int,sign:int,under_first:bool,return_raw:bool = False) -> Tuple["RopeTopology",List[int]]:
+    def add_C(self,over_ind:int,under_ind:int,sign:int,under_first:bool) -> Tuple["RopeTopology",List[int]]:
         assert over_ind in [0,self.size] or under_ind in [0,self.size], f'C moves require at least one of the affected indices to be the end of the rope.'         
         T = deepcopy(self.rep)
 
@@ -824,11 +824,6 @@ class RopeTopology:
 
         r2_rep = np.hstack([T,N])
         r2_rep = r2_rep[:,r2_rep[0,:].argsort()]
-        if return_raw:
-            if RopeTopology.quick_check(r2_rep):
-                return r2_rep, over_segs
-            else:
-                raise InvalidTopology(f"Could not add C move. {self.rep} does not allow segment {over_ind} to be placed over segment {under_ind}, with sign {sign}.")
         return RopeTopology(r2_rep), over_segs
     
     def remove_C(self,segment_num:int,return_raw:bool = False) -> Tuple["RopeTopology",List[int]]:
@@ -919,8 +914,14 @@ class RopeTopology:
         
         segments = [self.segments[segment_num]]
         prev_seg = self.segments[segment_num]
-        c = prev_seg.end_crossing
-        is_input = True
+        
+        if segment_num == self.size:
+            c = prev_seg.start_crossing
+            is_input = False
+        else:
+            c = prev_seg.end_crossing
+            is_input = True
+
         while True:
             next_seg, was_output = c.get_side_segment(prev_seg,on_left,is_input)
             if next_seg in segments:

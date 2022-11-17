@@ -4,6 +4,8 @@ import numpy as np
 import multiprocessing as mp
 import matplotlib.pyplot as plt
 import pickle
+from tqdm import tqdm
+
 
 from softgym.envs.rope_knot import RopeKnotEnv
 
@@ -239,8 +241,12 @@ def main(env_kwargs,all_args):
     os.makedirs(os.path.join(all_args.save_name,'mid'),exist_ok=all_args.start != 0)
     os.makedirs(os.path.join(all_args.save_name,'place'),exist_ok=all_args.start != 0)
 
-    # envs = RopeKnotEnv(**env_kwargs)
-    envs = SubprocVecEnv([lambda: RopeKnotEnv(goal_topology=trefoil_knot.rep,**env_kwargs)]*all_args.num_workers,'spawn')
+    if all_args.num_workers == 1:
+        envs = RopeKnotEnv(**env_kwargs)
+        envs.reset()
+    else:
+        envs = SubprocVecEnv([lambda: RopeKnotEnv(goal_topology=trefoil_knot.rep,**env_kwargs)]*all_args.num_workers,'spawn')
+        envs.env_method("reset")
     data = {
         "plain_path":[],
         "pick_path":[],
@@ -254,21 +260,27 @@ def main(env_kwargs,all_args):
         "Topo_actions":[],
     }
     
-    envs.env_method("reset")
 
-    for step_num in range(all_args.total_steps//all_args.num_workers):
+    for step_num in tqdm(range(all_args.total_steps//all_args.num_workers)):
         env_actions = []
         topo_actions = [None]*all_args.num_workers
         while True:
             try:
-                envs.env_method('generate_env_variation')
-                rope_reps = envs.env_method("get_topological_representation")
-            except InvalidTopology:
+                if all_args.num_workers == 1:
+                    envs.generate_env_variation()
+                    rope_reps = [envs.get_topological_representation()]
+                else:
+                    envs.env_method('generate_env_variation')
+                    rope_reps = envs.env_method("get_topological_representation")
+            except:
                 with open(os.path.join(all_args.save_name,"Errors.pkl"),"ab") as f:
-                    pickle.dump(envs.env_method("get_geoms"),f)
+                    pickle.dump(envs.get_geoms(),f)
                 continue
             break
-        before_render = envs.env_method("render_no_gripper")
+        if all_args.num_workers == 1:
+            before_render = [envs.render_no_gripper()]
+        else:
+            before_render = envs.env_method("render_no_gripper")
                   
         for worker_num in range(all_args.num_workers):
 
@@ -280,16 +292,16 @@ def main(env_kwargs,all_args):
             mid_pos = np.mean(mid_region,axis=0)
             place_pos = np.mean(place_region,axis=0)
 
-            # TODO: Change so that it accounts for the reference frame
+            pick_loc = rope_reps[worker_num].geometry[pick_idx,[0,2]]
             pick_act = pick_norm
-            mid_act = mid_pos
-            place_act = place_pos
+            mid_act = mid_pos - pick_loc
+            place_act = place_pos - pick_loc
 
             env_actions.append([pick_act,*mid_act.flatten().tolist(),*place_act.flatten().tolist()])
 
             plain_path,pick_path,mid_path,place_path = save_images(
                 all_args.save_name,
-                step_num*all_args.num_workers + all_args.start,
+                all_args.start + step_num*all_args.num_workers + worker_num,
                 before_render[worker_num],
                 *action_masks
             )
@@ -303,12 +315,24 @@ def main(env_kwargs,all_args):
             data["mid_region"].append(mid_region)
             data["place_region"].append(place_region)
 
-        envs.step(env_actions)
-        new_reps = envs.env_method("get_topological_representation")
+        if all_args.num_workers == 1:
+            envs.step(env_actions[0])
+        else:
+            envs.step(env_actions)
 
-        successes = [None] * all_args.num_workers
-        for worker_num in range(all_args.num_workers):
-            successes[worker_num] = new_reps[worker_num] == rope_reps[worker_num].add_C(*topo_actions[worker_num])[0]
+        try:
+            if all_args.num_workers == 1:
+                new_reps = [envs.get_topological_representation()]
+            else:
+                new_reps = envs.env_method("get_topological_representation")
+
+            successes = [None] * all_args.num_workers
+            for worker_num in range(all_args.num_workers):
+                successes[worker_num] = new_reps[worker_num] == rope_reps[worker_num].add_C(*topo_actions[worker_num])[0]
+        except:
+            
+            with open(os.path.join(all_args.save_name,"Errors.pkl"),"ab") as f:
+                pickle.dump(envs.get_geoms(),f)
 
         data["Topo_actions"].extend(topo_actions)
         data["topology"].extend(rope_reps)
@@ -337,7 +361,7 @@ def get_args():
 
     # Environment options
     parser.add_argument('--num_variations', type=int, default=500, help='Number of environment variations to be generated')
-    parser.add_argument('--horizon',type=int,default=5,help='The length of each episode.')
+    parser.add_argument('--horizon',type=int,default=9e9,help='The length of each episode.')
     parser.add_argument('--render_mode',type=str,default='cloth',help='The render mode of the object. Must be from the set \{cloth, particle, both\}.')
     parser.add_argument('--maximum_crossings',type=int,default=5,help='The maximum number of crossings for topological representations. Any representation exceeding this will be clipped down.')
     parser.add_argument('--goal_crossings',type=int,default=1,help='The number of crossings used for the goal configuration.')

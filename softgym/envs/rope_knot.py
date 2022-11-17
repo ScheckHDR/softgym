@@ -164,8 +164,26 @@ class RopeKnotEnv(RopeNewEnv):
 
     def get_geoms(self):
         geoms = np.array(pyflex.get_positions()).reshape([-1, 4])[:, :3]
+        x,y,z,theta = self.get_rope_frame()
+        T_mat = np.array([
+            [np.cos(theta),0,np.sin(theta),x],
+            [0,1,0,y],
+            [-np.sin(theta),0,np.cos(theta),z],
+            [0,0,0,1]
+        ])
 
-        return geoms
+        return (np.linalg.inv(T_mat) @ np.vstack([geoms.T,np.ones(geoms.shape[0])]))[:3,:].T
+
+    def get_rope_frame(self):
+        geoms = np.array(pyflex.get_positions()).reshape([-1, 4])[:2, :3]
+
+        x = geoms[0,0]
+        y = 0#geoms[0,1]
+        z = geoms[0,2]
+
+        theta = np.arctan2(geoms[1,1]-geoms[0,1],geoms[1,0]-geoms[0,0])
+
+        return x,y,z,theta
 
     def get_topological_representation(self):
         # particle_pos = self.get_geoms(True)
@@ -209,48 +227,39 @@ class RopeKnotEnv(RopeNewEnv):
         return RopeTopology.is_equivalent(self.get_topological_representation(),self.goal_configuration,False,False)
         
     def _step(self, action):
-        # rope = self._get_obs()
-        # rope_frame = rope['tail']
+        rope = self.get_geoms()
+        rope_frame = self.get_rope_frame()
 
-        # theta = rope_frame[0,2]
+        theta = rope_frame[3]
 
-        # T_mat = np.array(
-        #     [
-        #         [np.math.cos(theta),0,np.math.sin(theta),rope_frame[0,0]],
-        #         [0,1,0,0],
-        #         [-np.math.sin(theta),0, np.math.cos(theta),rope_frame[0,1]],
-        #         [0,0,0,1]
-        #     ]
-        # )
+        T_mat = np.array(
+            [
+                [np.cos(theta),0,np.sin(theta),rope_frame[0]],
+                [0,1,0,rope_frame[1]],
+                [-np.sin(theta),0, np.cos(theta),rope_frame[2]],
+                [0,0,0,1]
+            ]
+        )
+        rel_positions_h = np.vstack([rope.T,np.ones(rope.shape[0])])
 
-        # rel_positions_h = np.concatenate(
-        #     (
-        #         np.insert(rope['shape'][0,:],0,0).reshape((1,-1)),
-        #         np.zeros((1,rope['cross'].shape[-1])),
-        #         np.insert(rope['shape'][1,:],0,0).reshape((1,-1)),
-        #         np.ones((1,rope['cross'].shape[-1]))
-        #     ),
-        #     axis=0
-        # ).reshape((4,-1))
+        pick_idx = round(action[0] * (rel_positions_h.shape[1]-1))
+        pick_coords_rel_h = np.expand_dims(rel_positions_h[:,pick_idx],-1)
 
-        # pick_idx = round(action[0] * (rel_positions_h.shape[1]-1))
-        # pick_coords_rel_h = np.expand_dims(rel_positions_h[:,pick_idx],-1)
+        waypoints_rel = np.array(action[1:]).reshape([-1,2]).T
 
-        # waypoints_rel = np.array(action[1:]).reshape([-1,2]).T
+        waypoints_rel_h = np.vstack([waypoints_rel[0,:],np.zeros(waypoints_rel.shape[1]),waypoints_rel[1,:],np.zeros(waypoints_rel.shape[1])]) # Making last row zeros instead of ones for the homogeneous as the ones will come from the addition on next line.
+        waypoints_h = pick_coords_rel_h + waypoints_rel_h
 
-        # waypoints_rel_h = np.vstack([waypoints_rel[0,:],np.zeros([1,waypoints_rel.shape[1]]),waypoints_rel[1,:],np.zeros([1,waypoints_rel.shape[1]])]) # Making last row zeros instead of ones for the homogeneous as the ones will come from the addition on next line.
-        # waypoints_h = pick_coords_rel_h + waypoints_rel_h
+        pick_coords = (T_mat @ pick_coords_rel_h)[0:3]
+        waypoint_coords = (T_mat @ waypoints_h)[0:3]
 
-        # pick_coords = (T_mat @ pick_coords_rel_h)[0:3]
-        # waypoint_coords = (T_mat @ waypoints_h)[0:3]
+        # geometry = self.get_geoms()
+        # pick_idx = round(action[0]*(geometry.shape[0]-1))
+        # pick_coords = geometry[pick_idx,:]
+        # waypoint_coords = np.array(action[1:]).reshape([-1,2])
+        # waypoint_coords = np.insert(waypoint_coords,1,np.zeros(waypoint_coords.shape[0]),axis=1)
 
-        geometry = self.get_geoms()
-        pick_idx = round(action[0]*(geometry.shape[0]-1))
-        pick_coords = geometry[pick_idx,:]
-        waypoint_coords = np.array(action[1:]).reshape([-1,2])
-        waypoint_coords = np.insert(waypoint_coords,1,np.zeros(waypoint_coords.shape[0]),axis=1)
-
-        traj = np.expand_dims(simple_trajectory(np.vstack([pick_coords,waypoint_coords]),height=0.1,num_points_per_leg=50),0) # only a single picker
+        traj = np.expand_dims(simple_trajectory(np.hstack([pick_coords,waypoint_coords]).T,height=0.1,num_points_per_leg=50),0) # only a single picker
 
         self.action_tool.step(traj,renderer=self.render if not self.headless else lambda *args, **kwargs : None)
 

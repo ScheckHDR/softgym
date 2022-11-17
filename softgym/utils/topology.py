@@ -607,6 +607,8 @@ class RopeTopology:
         for i in range(geoms.shape[0]):
             for j in range(i+2, geoms.shape[0]-2):
                 if _intersect(geoms[i,:].flatten(),geoms[i+1,:].flatten(),geoms[j,:].flatten(),geoms[j+1,:].flatten()):
+                    if np.any(np.round(geoms[j:j+2,:] - geoms[i,1],5) == 0) or np.any(np.round(geoms[j:j+2,:] - geoms[i+1,1],5) == 0):
+                        print("WTF")
                     intersections.append([i,j])
                     intersections.append([j,i])
 

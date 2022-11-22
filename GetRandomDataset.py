@@ -236,111 +236,59 @@ def main(env_kwargs,all_args):
     env_kwargs["camera_width"] = w
     env_kwargs["camera_height"] = h
 
-    os.makedirs(os.path.join(all_args.save_name,"plain"),exist_ok=all_args.start != 0)
-    os.makedirs(os.path.join(all_args.save_name,"pick"),exist_ok=all_args.start != 0)
-    os.makedirs(os.path.join(all_args.save_name,"mid"),exist_ok=all_args.start != 0)
-    os.makedirs(os.path.join(all_args.save_name,"place"),exist_ok=all_args.start != 0)
+    os.makedirs(os.path.join(all_args.save_name,"before"),exist_ok=all_args.start != 0)
+    os.makedirs(os.path.join(all_args.save_name,"after"),exist_ok=all_args.start != 0)
 
-    if all_args.num_workers == 1:
-        envs = RopeKnotEnv(**env_kwargs)
-        envs.reset()
-    else:
-        envs = SubprocVecEnv([lambda: RopeKnotEnv(goal_topology=trefoil_knot.rep,**env_kwargs)]*all_args.num_workers,"spawn")
-        envs.env_method("reset")
+
+    envs = SubprocVecEnv([lambda: RopeKnotEnv(goal_topology=trefoil_knot.rep,**env_kwargs)]*all_args.num_workers,"spawn")
     data = {
-        "plain_path":[],
-        "pick_path":[],
-        "mid_path":[],
-        "place_path":[],
-        "successful":[],
-        "pick_region":[],
-        "mid_region":[],
-        "place_region":[],
-        "topology":[],
-        "topo_actions":[],
+        "obs":[],
+        "rews":[],
         "actions":[],
-        "topo_after":[],
+        "dones":[],
+        "obs_next":[],
+        "topology":[],
+        "topology_next":[],
+        "plain_before":[],
+        "plain_after":[]
     }
     
 
+    envs.reset()
     for step_num in tqdm(range(0,all_args.total_steps,all_args.num_workers)):
         env_actions = []
         topo_actions = [None]*all_args.num_workers
-        while True:
-            try:
-                if all_args.num_workers == 1:
-                    envs.generate_env_variation()
-                    rope_reps = [envs.get_topological_representation()]
-                else:
-                    envs.env_method("generate_env_variation")
-                    rope_reps = envs.env_method("get_topological_representation")
-            except InvalidTopology:
-                with open(os.path.join(all_args.save_name,"Errors.pkl"),"ab") as f:
-                    pickle.dump(envs.get_geoms(),f)
-                continue
-            break
-        if all_args.num_workers == 1:
-            before_render = [envs.render_no_gripper()]
-        else:
-            before_render = envs.env_method("render_no_gripper")
+            
+        envs.env_method("generate_env_variation")
+        obs = envs.env_method("get_obs")
+
+        rope_reps = envs.env_method("get_topological_representation")
+        before_render = envs.env_method("render_no_gripper")
                   
-        for worker_num in range(all_args.num_workers):
+        actions = [a_s.sample() for a_s in envs.get_attr('action_space')]
+        obs_next,rews,dones,infos = envs.step(actions)
 
-            topo_actions[worker_num] = random.choice(all_add_C(rope_reps[worker_num]))
-            pick_idx, pick_region,mid_region,place_region = topo_to_geometry_add_C(rope_reps[worker_num],topo_actions[worker_num])
-            action_masks = get_action_masks(before_render[worker_num],pick_region.T,mid_region.T,place_region.T)
+        new_reps = envs.env_method("get_topological_representation")
+        after_render = envs.env_method("render_no_gripper")
 
-            pick_norm = pick_idx/rope_reps[worker_num].rope_length
-            mid_pos = np.mean(mid_region,axis=0)
-            place_pos = np.mean(place_region,axis=0)
-
-            pick_loc = rope_reps[worker_num].geometry[pick_idx,[0,2]]
-            pick_act = pick_norm
-            mid_act = mid_pos - pick_loc
-            place_act = place_pos - pick_loc
-
-            env_actions.append([pick_act,*mid_act.flatten().tolist(),*place_act.flatten().tolist()])
-
-            plain_path,pick_path,mid_path,place_path = save_images(
-                all_args.save_name,
-                all_args.start + step_num + worker_num,
-                before_render[worker_num],
-                *action_masks
-            )
-
-            data["plain_path"].append(plain_path)
-            data["pick_path"].append(pick_path)
-            data["mid_path"].append(mid_path)
-            data["place_path"].append(place_path)
-            
-            data["pick_region"].append(pick_region)
-            data["mid_region"].append(mid_region)
-            data["place_region"].append(place_region)
-
-        if all_args.num_workers == 1:
-            envs.step(env_actions[0])
-        else:
-            envs.step(env_actions)
-
-        try:
-            if all_args.num_workers == 1:
-                new_reps = [envs.get_topological_representation()]
-            else:
-                new_reps = envs.env_method("get_topological_representation")
-
-            successes = [None] * all_args.num_workers
-            for worker_num in range(all_args.num_workers):
-                successes[worker_num] = new_reps[worker_num] == rope_reps[worker_num].add_C(*topo_actions[worker_num])[0]
-        except:
-            
-            with open(os.path.join(all_args.save_name,"Errors.pkl"),"ab") as f:
-                pickle.dump(envs.get_geoms(),f)
-
-        data["topo_actions"].extend(topo_actions)
+        data["obs"].extend(obs)
+        data["rews"].extend(rews)
+        data["actions"].extend(actions)
+        data["dones"].extend(dones)
+        data["obs_next"].extend(obs_next)
         data["topology"].extend(rope_reps)
-        data["topo_after"].extend(new_reps)
-        data["actions"].extend(env_actions)
-        data["successful"].extend(successes)
+        data["topology_next"].extend(new_reps)
+        bp = [""]*all_args.num_workers
+        ap = [""]*all_args.num_workers
+        for i in range(all_args.num_workers):
+            bp[i] = os.path.join(all_args.save_name,"before",f"{all_args.start+step_num+i}.png")
+            ap[i] = os.path.join(all_args.save_name,"after",f"{all_args.start+step_num+i}.png")
+
+            cv2.imwrite(bp[i],before_render[i])
+            cv2.imwrite(ap[i],after_render[i])
+        data["plain_before"].extend(bp)
+        data["plain_after"].extend(ap)
+
 
 
 
@@ -410,7 +358,7 @@ if __name__ == "__main__":
         # "trajectory_funcs"  : [box_trajectory],
         "maximum_crossings" : args.maximum_crossings,
         "goal_crossings"    : args.goal_crossings,
-        "task" : "knot"
+        "task" : "Straight"
     }
 
     if args.seed:

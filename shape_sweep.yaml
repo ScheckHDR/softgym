@@ -1,24 +1,24 @@
-program: trainOffline2.py
+program: trainStraightenOffline.py
 method: bayes
-name : offlineRL_sweep
+name : Straighten_test
 metric:
-  goal: minimize
-  name: actor_loss
+  goal: maximize
+  name: val_return
 parameters:
   num_layers:
     values: [1,2,3]
   hidden_layer_size:
     value: 128
   actor_lr:
-    min: 0.0001
+    min: 0.00001
     max: 0.1
   critic_lr:
-    min: 0.0001
+    min: 0.00001
     max: 0.1
   gamma:
     values: [0.9,0.95,0.99]
   min_q_weight:
-    min: 0.01
+    min: 0.001
     max: 0.5
   explore:
     min: 0
@@ -30,6 +30,6 @@ parameters:
   batch_size: 
     values: [16,32,64]
   steps_per_epoch:
-    values: [1000,2000,4000]
+    value: 500
   dataset_path: 
-    value: "Datasets/dataset2.pkl"
+    value: "Datasets/Random/Data.pkl"

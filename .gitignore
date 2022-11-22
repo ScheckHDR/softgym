@@ -23,7 +23,6 @@ build/
 miscTesting
 .vscode
 output/
-wandb/
+wandb*/
 lightning_logs
 Datasets/*
-TEMP_SWEEP

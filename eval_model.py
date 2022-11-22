@@ -23,7 +23,7 @@ def eval_model(
         "observation_mode": "key_point",
         "action_mode": "picker_trajectory",
         "num_picker": 1,
-        "render": not headless,
+        "render": True,
         "headless": headless,
         "horizon": max_episode_length + 1, # Addd one because I think the env gets marked as done if it reaches the limit. I want to test that separately.
         "action_repeat": 1,
@@ -34,6 +34,7 @@ def eval_model(
         "deterministic": False,
         "maximum_crossings": 5,
         "goal_crossings": 3,
+        "task":"STRAIGHT"
     }
     
     envs = SubprocVecEnv([lambda: Monitor(RopeKnotEnv(goal_topology=goal_topo,**env_kwargs))]*num_workers,"spawn")
@@ -47,10 +48,10 @@ def eval_model(
         obs = envs.reset()
         while envs_finished < num_episodes:
            
-            obs = as_tensor(obs["shape"].astype(np.float32)).to('cuda')
+            obs = torch.tensor(obs).float().to('cuda')
             # for key in obs:
             #     obs[key] = obs[key].unsqueeze(0)
-            action = policy(obs).normal.loc.cpu().numpy()
+            action = policy(obs).mode.cpu().numpy()
             obs,rewards,dones,infos = envs.step(action)
 
             steps_taken += 1

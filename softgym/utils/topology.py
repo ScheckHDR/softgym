@@ -8,6 +8,8 @@ from queue import PriorityQueue, Queue
 
 class InvalidTopology(Exception):
     pass
+class InvalidGeometry(Exception):
+    pass
 
 
 ########## Topological Representation
@@ -608,7 +610,7 @@ class RopeTopology:
             for j in range(i+2, geoms.shape[0]-2):
                 if _intersect(geoms[i,:].flatten(),geoms[i+1,:].flatten(),geoms[j,:].flatten(),geoms[j+1,:].flatten()):
                     if np.any(np.round(geoms[j:j+2,:] - geoms[i,1],5) == 0) or np.any(np.round(geoms[j:j+2,:] - geoms[i+1,1],5) == 0):
-                        print("WTF")
+                        raise InvalidGeometry(f"Rope phases through itself at indices {i} and {j}.")
                     intersections.append([i,j])
                     intersections.append([j,i])
 
@@ -645,29 +647,33 @@ class RopeTopology:
 
     @staticmethod
     def random(num_crossings,check_level:int=2) -> "RopeTopology":
-        
-        topo = -np.ones((4,2 * num_crossings))
-        topo[RopeTopology.SEGMENT_NUM,:] = np.arange(2 * num_crossings)
+        while True:
+            topo = -np.ones((4,2 * num_crossings))
+            topo[RopeTopology.SEGMENT_NUM,:] = np.arange(2 * num_crossings)
 
-        for i in range(2 * num_crossings):
-            if topo[-1,i] == -1:
-                possible_matches = np.where(topo[RopeTopology.CHIRALITY] == -1)[0]
-                possible_matches = possible_matches[np.where(possible_matches != i)[0]]
+            for i in range(2 * num_crossings):
+                if topo[-1,i] == -1:
+                    possible_matches = np.where(topo[RopeTopology.CHIRALITY] == -1)[0]
+                    possible_matches = possible_matches[np.where(possible_matches != i)[0]]
 
-                j = random.choice(possible_matches)
+                    j = random.choice(possible_matches)
 
-                topo[RopeTopology.CORRESPONDING,i] = j
-                topo[RopeTopology.CORRESPONDING,j] = i
+                    topo[RopeTopology.CORRESPONDING,i] = j
+                    topo[RopeTopology.CORRESPONDING,j] = i
 
-                is_over = random.choice([-1,1])
-                topo[RopeTopology.OVER_UNDER,i] = is_over
-                topo[RopeTopology.OVER_UNDER,j] = -is_over
+                    is_over = random.choice([-1,1])
+                    topo[RopeTopology.OVER_UNDER,i] = is_over
+                    topo[RopeTopology.OVER_UNDER,j] = -is_over
 
-                chirality = random.choice([-1,1])
-                topo[RopeTopology.CHIRALITY,i] = chirality
-                topo[RopeTopology.CHIRALITY,j] = chirality
-
-        return RopeTopology(topo,check_level=check_level)
+                    chirality = random.choice([-1,1])
+                    topo[RopeTopology.CHIRALITY,i] = chirality
+                    topo[RopeTopology.CHIRALITY,j] = chirality
+            try:
+                topo = RopeTopology(topo,check_level=check_level)
+            except InvalidTopology:
+                continue
+            break
+        return topo
 
 
     ############## Visualisation.

@@ -67,7 +67,6 @@ def convert_topo_rep(topo,workspace,obs_spaces):
         "cross" : incidence_matrix
     }
 
-
 class RopeKnotEnv(RopeNewEnv):
     def __init__(self, goal_topology = None,cached_states_path='rope_knot_init_states.pkl', **kwargs):
         kwargs['action_mode'] = 'picker_trajectory'
@@ -79,7 +78,6 @@ class RopeKnotEnv(RopeNewEnv):
 
         self.headless = kwargs['headless']
 
-        self.maximum_crossings = kwargs['maximum_crossings']
         self.goal_crossings = kwargs['goal_crossings']
 
         if self.action_mode == 'picker_trajectory':
@@ -88,25 +86,27 @@ class RopeKnotEnv(RopeNewEnv):
             self.get_cached_configs_and_states(cached_states_path, self.num_variations)
 
             self.action_space = Box(
-                np.array([0,-0.35,-0.35]*self.num_picker),
-                np.array([ 1, 0.35, 0.35]*self.num_picker)
+                np.array([0,-0.35,-0.35,-0.35,-0.35]*self.num_picker),
+                np.array([ 1, 0.35, 0.35,0.35,0.35]*self.num_picker)
             )
 
         points = 41
         # obs_dim = points*points + 2*points + 1
-        self.observation_space = Dict({
-            "tail"  : Box(low=np.array([-1]*3,ndmin=2), high=np.array([1]*3,ndmin=2)),
-            "shape" : Box(low=np.array([[-1]*(points-1)]*2,ndmin=2),high=np.array([[-1]*(points-1)]*2,ndmin=2)),
-            "cross" : Box(low=np.array([[-1]*points]*points,ndmin=3),high=np.array([[-1]*points]*points,ndmin=3))
-        })
-        # self.observation_space = Box(np.array([-1]*obs_dim),np.array([1]*obs_dim))
+
+        self.task = kwargs["task"].upper()
+        if self.task == "KNOT":
+            dim = points*3 + 3
+        elif self.task == "STRAIGHT":
+            dim = points*3 + 3
+        elif self.task == "CORNER":
+            dim = 6
+        self.observation_space = Box(low=-np.ones((1,dim)),high=np.ones((1,dim)))
 
         self.workspace =np.array([[-0.35,0.35],[-0.35,0.35]])
         if goal_topology is not None:
             self.goal_configuration = deepcopy(goal_topology)
         else:
             self.goal_configuration = deepcopy(RopeTopology.random(self.goal_crossings))
-        # print(self.goal_configuration)
               
     def _reset(self):
         
@@ -129,38 +129,54 @@ class RopeKnotEnv(RopeNewEnv):
         for _ in range(50):
             pyflex.step()
 
-        return self._get_obs()
+        while True:
+            try:
+                obs = self._get_obs()
+            except InvalidGeometry as e:
+                pick_id = int(str(e).replace('.','').split(' ')[-1])
+                disturb_rope(pick_id)
+                continue
+            break
+        return obs
 
     def generate_env_variation(self, num_variations=1, config=None, save_to_file=False, **kwargs):
         
         generated_configs, generated_states = [], []
 
+        while True:
+            if config is None:
+                config = self.get_default_config()
+            for _ in range(num_variations):
+                config_variation = deepcopy(config)
 
-        if config is None:
-            config = self.get_default_config()
-        for _ in range(num_variations):
-            config_variation = deepcopy(config)
+                # Place random variations here
+                # ----------------------------
+                self.set_scene(config_variation)
 
-            # Place random variations here
-            # ----------------------------
-            self.set_scene(config_variation)
+                self.update_camera('default_camera',config_variation['camera_params']['default_camera'])
+                self.action_tool.reset([0., -1., 0.])
 
-            self.update_camera('default_camera',config_variation['camera_params']['default_camera'])
-            self.action_tool.reset([0., -1., 0.])
+                random_pick_and_place(pick_num=4, pick_scale=0.005)
+                center_object()
 
-            random_pick_and_place(pick_num=4, pick_scale=0.005)
-            center_object()
+                generated_configs.append(deepcopy(config_variation))
+                generated_states.append(deepcopy(self.get_state()))
+            try:
+                self.get_topological_representation()
+            except InvalidGeometry as e:
+                pick_id = int(str(e).replace('.','').split(' ')[-1])
+                disturb_rope(pick_id)   
+                continue
+            break
 
-            generated_configs.append(deepcopy(config_variation))
-            generated_states.append(deepcopy(self.get_state()))
         return generated_configs, generated_states
 
     def compute_reward(self, action=None, obs=None, **kwargs):
-
-        if self._is_done():
-            return 0
-        else:
-            return -1
+        if self.task == "STRAIGHT":
+            reward = np.linalg.norm(self.get_geoms()[-1,:])
+        elif self.task == "KNOT":
+            reward = self._is_done()-1
+        return reward
 
     def get_geoms(self):
         geoms = np.array(pyflex.get_positions()).reshape([-1, 4])[:, :3]
@@ -178,7 +194,7 @@ class RopeKnotEnv(RopeNewEnv):
         geoms = np.array(pyflex.get_positions()).reshape([-1, 4])[:2, :3]
 
         x = geoms[0,0]
-        y = 0#geoms[0,1]
+        y = geoms[0,1] # nominally 0.1
         z = geoms[0,2]
 
         theta = np.arctan2(geoms[1,1]-geoms[0,1],geoms[1,0]-geoms[0,0])
@@ -186,47 +202,15 @@ class RopeKnotEnv(RopeNewEnv):
         return x,y,z,theta
 
     def get_topological_representation(self):
-        # particle_pos = self.get_geoms(True)
         
-        # topo_test = np.zeros((3,particle_pos.shape[0]))
-        # intersections = []
-        # for i in range(1,particle_pos.shape[0]):
-        #     for j in range (i+2,particle_pos.shape[0]):
-
-        #         if intersect(particle_pos[i],particle_pos[i-1],particle_pos[j],particle_pos[j-1]):
-        #             for k in range(j,particle_pos.shape[0]):
-        #                 # avoid possibility for two crossings to be associated with same geom
-        #                 # pushes secondary crossing onto later geom
-        #                 if topo_test[0,k] == 0:
-        #                     topo_test[1,i:] += 1
-        #                     topo_test[1,k:] += 1
-        #                     intersections.append([i,k])
-        #                     intersections.append([k,i])
-        #                     if particle_pos[i,1] > particle_pos[k,1]:
-        #                         topo_test[0,i] =  1
-        #                         topo_test[0,k] = -1
-        #                     else:
-        #                         topo_test[0,i] = -1
-        #                         topo_test[0,k] = 1
-        #                     break
-
-        
-        # if len(intersections) > 1:
-        #     intersections.sort(key = lambda a:a[0])
-        #     cross1 = np.argmax(topo_test[1,:] != 0)
-        #     for i in range(cross1,topo_test.shape[1]):
-        #         topo_test[2, i] = intersections.index(
-        #             intersections[int(topo_test[1,i])-1][::-1])
-            
-        # full_rep = np.concatenate((np.transpose(particle_pos[:,[0,2]]),topo_test),axis=0)
-
-        # return full_rep
         return RopeTopology.from_geometry(self.get_geoms(),plane_normal=np.array([0,1,0]))
-  
+
     def _is_done(self):
-        return RopeTopology.is_equivalent(self.get_topological_representation(),self.goal_configuration,False,False)
+        # return RopeTopology.is_equivalent(self.get_topological_representation(),self.goal_configuration,False,False)
+        return False
         
     def _step(self, action):
+        action = action.flatten()
         rope = self.get_geoms()
         rope_frame = self.get_rope_frame()
 
@@ -253,25 +237,32 @@ class RopeKnotEnv(RopeNewEnv):
         pick_coords = (T_mat @ pick_coords_rel_h)[0:3]
         waypoint_coords = (T_mat @ waypoints_h)[0:3]
 
-        # geometry = self.get_geoms()
-        # pick_idx = round(action[0]*(geometry.shape[0]-1))
-        # pick_coords = geometry[pick_idx,:]
-        # waypoint_coords = np.array(action[1:]).reshape([-1,2])
-        # waypoint_coords = np.insert(waypoint_coords,1,np.zeros(waypoint_coords.shape[0]),axis=1)
-
         traj = np.expand_dims(simple_trajectory(np.hstack([pick_coords,waypoint_coords]).T,height=0.1,num_points_per_leg=50),0) # only a single picker
 
         self.action_tool.step(traj,renderer=self.render if not self.headless else lambda *args, **kwargs : None)
 
-        return self.observation_space.sample(),None,None,None
+        try:
+            self.get_topological_representation()
+        except InvalidGeometry as e:
+            id1 = int(str(e).replace('.','').split(' ')[-1])
+            id2 = int(str(e).replace('.','').split(' ')[-3])
+            pick_id = id1 if abs(id1-pick_idx) < abs(id2-pick_idx) else id2
+            disturb_rope(pick_id)
 
     def _get_obs(self):
-        # return self.get_topological_representation()
-        return self.observation_space.sample()
-
+        # self.get_topological_representation()
+        geoms = self.get_geoms()
+        x,y,z,theta = self.get_rope_frame()
+        if self.task == "KNOT":
+            return np.hstack([np.array([x,z,theta]),geoms.flatten()])
+        elif self.task == "STRAIGHT":
+            return np.expand_dims(np.hstack([np.array([x,z,theta]),geoms.flatten()]),0)
+        elif self.task == "CORNER":
+            return np.hstack([np.array([x,z,theta]),geoms[0,:].flatten()])
+        else:
+            raise Exception(f"Unknown observation required. Observations must be any of {{KNOT,STRAIGHT,CORNER}}, not {self.task}")
     def get_obs(self):
-        # return self._get_obs()
-        return self.observation_space.sample()
+        return self._get_obs()
 
     def get_keypoints(self):
         particle_pos = self.get_geoms(True)
@@ -283,3 +274,14 @@ class RopeKnotEnv(RopeNewEnv):
     def render_no_gripper(self,mode='rgb_array'):
         self.action_tool.step(np.array([1,1,1,1],ndmin=2),renderer = lambda *args,**kwargs : None)
         return cv2.cvtColor(super().render(mode=mode)[-self.camera_height:,:self.camera_width,:],cv2.COLOR_RGB2BGR)
+
+
+######### Helper Functions
+def disturb_rope(move_idx:int,amount:float=5e-3):
+    curr_pos = pyflex.get_positions().reshape(-1, 4)
+    curr_pos[move_idx, 1] += amount
+    pyflex.set_positions(curr_pos.flatten())
+    pyflex.step()
+
+def rescale(x:np.ndarray,old_min:np.ndarray,old_max:np.ndarray,new_min:np.ndarray,new_max:np.ndarray):
+    return (x - old_min) / (old_max-old_min) * (new_max-new_min) + new_min

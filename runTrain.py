@@ -132,18 +132,6 @@ def main(default_config):
         'goal_crossings': wandb.config.goal_crossings,
     }
     
-    if not hasattr(wandb.config,'algorithm'):
-        algorithm = A2C
-    else:
-        if wandb.config.algorithm == 'SAC':
-            algorithm = SAC
-        elif wandb.config.algorithm == 'PPO':
-            algorithm = PPO
-        elif wandb.config.algorithm == 'A2C':
-            algorithm = A2C
-        elif wandb.config.algorithm == 'DQN':
-            algorithm = DQN
-
 
 
     training_kwargs = {
@@ -152,28 +140,17 @@ def main(default_config):
         'ent_coef' : wandb.config.ent_coef, 
     }
 
-    if algorithm is not SAC:
-        training_kwargs['n_steps'] = wandb.config.n_steps
-
     learning_schedule = const__schedule(wandb.config.learning_rate)
     policy = wandb.config.policy_type
     try:
-        if algorithm is not SAC:
-            envs = SubprocVecEnv([lambda: normalize(Monitor(RopeKnotEnv(**env_kwargs)))]*wandb.config.num_workers,'spawn')
-            model = algorithm(
-                wandb.config.policy_type,
-                envs,
-                verbose = 1,
-                **training_kwargs  
-            )
-        else:
-            envs = normalize(RopeKnotEnv(**env_kwargs))
-            model = algorithm(
-                wandb.config.policy_type,
-                envs,
-                verbose = 1,
-                **training_kwargs  
-            )
+        
+        envs = normalize(RopeKnotEnv(**env_kwargs))
+        model = SAC(
+            wandb.config.policy_type,
+            envs,
+            verbose = 1,
+            **training_kwargs  
+        )
 
         # try:
         model.learn(

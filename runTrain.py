@@ -7,7 +7,7 @@ import multiprocessing as mp
 import gym
 from softgym.envs.rope_knot import RopeKnotEnv
 from softgym.utils.normalized_env import normalize
-from softgym.utils.trajectories import box_trajectory, curved_trajectory, curved_trajectory
+# from softgym.utils.trajectories import box_trajectory, curved_trajectory, curved_trajectory
 
 from stable_baselines3 import A2C, SAC, PPO, DQN
 from stable_baselines3.sac.policies import MultiInputPolicy
@@ -23,6 +23,8 @@ from gym.spaces import Box
 
 import wandb
 from wandb.integration.sb3 import WandbCallback
+
+import os
 
 
 def const__schedule(init_val:float):
@@ -90,10 +92,10 @@ class CustomCallback(BaseCallback):
         
         if not self.first_iter:
             wandb.log({
-                'mean_reward':  self.model.logger.name_to_value["rollout/ep_rew_mean"],
-                'timesteps':    self.model.logger.name_to_value["time/total_timesteps"],
-                'policy_loss':  self.model.logger.name_to_value['train/policy_loss'],
-                'value_loss':   self.model.logger.name_to_value['train/value_loss']
+                "mean_reward":  self.model.logger.name_to_value["rollout/ep_rew_mean"],
+                "timesteps":    self.model.logger.name_to_value["time/total_timesteps"],
+                "policy_loss":  self.model.logger.name_to_value["train/policy_loss"],
+                "value_loss":   self.model.logger.name_to_value["train/value_loss"]
             })
         self.first_iter = False
 
@@ -115,33 +117,35 @@ def main(default_config):
         save_code=False
     )
     env_kwargs = {
-        'observation_mode': wandb.config.observation_mode,
-        'action_mode': wandb.config.action_mode,
-        'num_picker': wandb.config.num_picker,
-        'render': wandb.config.render,
-        'headless': wandb.config.headless,
-        'horizon': wandb.config.horizon,
-        'action_repeat': wandb.config.action_repeat,
-        'render_mode': wandb.config.render_mode,
-        'num_variations': wandb.config.num_variations,
-        'use_cached_states': wandb.config.use_cached_states,
-        'save_cached_states': wandb.config.save_cached_states,
-        'deterministic': wandb.config.deterministic,
-        'trajectory_funcs': wandb.config.trajectory_funcs,
-        'maximum_crossings': wandb.config.maximum_crossings,
-        'goal_crossings': wandb.config.goal_crossings,
+        "observation_mode": wandb.config.observation_mode,
+        "action_mode": wandb.config.action_mode,
+        "num_picker": wandb.config.num_picker,
+        "render": wandb.config.render,
+        "headless": wandb.config.headless,
+        "horizon": wandb.config.horizon,
+        "action_repeat": wandb.config.action_repeat,
+        "render_mode": wandb.config.render_mode,
+        "num_variations": wandb.config.num_variations,
+        "use_cached_states": wandb.config.use_cached_states,
+        "save_cached_states": wandb.config.save_cached_states,
+        "deterministic": wandb.config.deterministic,
+        "maximum_crossings": wandb.config.maximum_crossings,
+        "goal_crossings": wandb.config.goal_crossings,
+        "goal": wandb.config.goal_threshold,
+        "task": "STRAIGHT",
+
     }
     
 
 
     training_kwargs = {
-        'gamma' : wandb.config.gamma,
-        'learning_rate' : wandb.config.learning_rate,
-        'ent_coef' : wandb.config.ent_coef, 
+        "gamma" : wandb.config.gamma,
+        "learning_rate" : wandb.config.learning_rate,
+        "ent_coef" : wandb.config.ent_coef, 
     }
 
     learning_schedule = const__schedule(wandb.config.learning_rate)
-    policy = wandb.config.policy_type
+
     try:
         
         envs = normalize(RopeKnotEnv(**env_kwargs))
@@ -154,12 +158,12 @@ def main(default_config):
 
         # try:
         model.learn(
-            total_timesteps= wandb.config.total_timesteps // (wandb.config.num_workers if wandb.config.algorithm == 'SAC' else 1),
+            total_timesteps= wandb.config.total_timesteps,
             log_interval = 1,
             callback=CallbackList([
                 WandbCallback(
                     model_save_freq=500,
-                    model_save_path=f'{wandb.config.save_name}/models/{run.id}',
+                    model_save_path=os.path.join("./wandb_sweeps",wandb.config.save_name),
                     verbose=2,
                 ),
                 CustomCallback(verbose=2),
@@ -184,125 +188,132 @@ def main(default_config):
 def get_args():
     parser = argparse.ArgumentParser()
     
-    parser.add_argument('-headless', action='store_true', help='Whether to run the environment with headless rendering')
+    parser.add_argument("-headless", action="store_true", help="Whether to run the environment with headless rendering")
     
-    parser.add_argument('--save_name',type=str,default='./output/TEMP',help='The directory to place generated models.')
-    parser.add_argument('--num_workers',type=int,default=1,help='How many workers to run in parallel generating data for the model being trained.')
-    parser.add_argument('--num_agents',type=int,default=1)
+    parser.add_argument("--save_name",type=str,default="./output/TEMP",help="The directory to place generated models.")
+    parser.add_argument("--num_workers",type=int,default=1,help="How many workers to run in parallel generating data for the model being trained.")
+    parser.add_argument("--num_agents",type=int,default=1)
 
     # Environment options
-    parser.add_argument('--num_variations', type=int, default=1, help='Number of environment variations to be generated')
-    parser.add_argument('--horizon',type=int,default=5,help='The length of each episode.')
-    parser.add_argument('--pickers',type=int,default=2)
-    parser.add_argument('--render_mode',type=str,default='cloth',help='The render mode of the object. Must be from the set \{cloth, particle, both\}.')
-    parser.add_argument('--maximum_crossings',type=int,default=2,help='The maximum number of crossings for topological representations. Any representation exceeding this will be clipped down.')
-    parser.add_argument('--goal_crossings',type=int,default=1,help='The number of crossings used for the goal configuration.')
-    parser.add_argument('--total_steps',type=int,default=5000)
-    parser.add_argument('--num_sweeps',type=int,default=1,help='The number of runs to do in a sweep. If set to one, will default to doing a single run outside of a sweep setting. If set to 0, will keep sweeping indefinitely.')
-    parser.add_argument('--sweep_id',type=str,default=None)
-    parser.add_argument('--project_name',type=str,default="Rope_RL")
-    parser.add_argument('--sweep_name',type=str,default='test')
+    parser.add_argument("--num_variations", type=int, default=1, help="Number of environment variations to be generated")
+    parser.add_argument("--horizon",type=int,default=5,help="The length of each episode.")
+    parser.add_argument("--pickers",type=int,default=2)
+    parser.add_argument("--render_mode",type=str,default="cloth",help="The render mode of the object. Must be from the set \{cloth, particle, both\}.")
+    parser.add_argument("--maximum_crossings",type=int,default=2,help="The maximum number of crossings for topological representations. Any representation exceeding this will be clipped down.")
+    parser.add_argument("--goal_crossings",type=int,default=1,help="The number of crossings used for the goal configuration.")
+    parser.add_argument("--total_steps",type=int,default=5000)
+    parser.add_argument("--num_sweeps",type=int,default=1,help="The number of runs to do in a sweep. If set to one, will default to doing a single run outside of a sweep setting. If set to 0, will keep sweeping indefinitely.")
+    parser.add_argument("--sweep_id",type=str,default=None)
+    parser.add_argument("--project_name",type=str,default="Rope_RL")
+    parser.add_argument("--sweep_name",type=str,default="test")
+
+    parser.add_argument("--ent_coef")
+    parser.add_argument("--gamma")
+    parser.add_argument("--learning_rate")
+    parser.add_argument("--n_steps")
 
     args = parser.parse_args()    
     args.render_mode = args.render_mode.lower()
 
-    assert args.num_workers > 0, f'num_workers must be set to a positive integer. You entered {args.num_workers}.'
-    assert args.horizon > 0, f'Horizon length must be a positive integer. You entered {args.horizon}.'
-    assert args.pickers > 0, f'Number of pickers must be a positive integer. You entered {args.pickers}.'
-    assert args.render_mode in ('cloth','particle','both'), f'Render_mode must be from the set {{cloth, particle, both}}. You entered {args.render_mode}.'
-    assert args.num_sweeps >= 0, f'num_sweeps must be a positive whole number. You entered {args.num_sweeps}'
-    assert args.num_agents > 0, f'num_agents must be a positive integer, not {args.num_agents}'
+    assert args.num_workers > 0, f"num_workers must be set to a positive integer. You entered {args.num_workers}."
+    assert args.horizon > 0, f"Horizon length must be a positive integer. You entered {args.horizon}."
+    assert args.pickers > 0, f"Number of pickers must be a positive integer. You entered {args.pickers}."
+    assert args.render_mode in ("cloth","particle","both"), f"Render_mode must be from the set {{cloth, particle, both}}. You entered {args.render_mode}."
+    assert args.num_sweeps >= 0, f"num_sweeps must be a positive whole number. You entered {args.num_sweeps}"
+    assert args.num_agents > 0, f"num_agents must be a positive integer, not {args.num_agents}"
 
     return args
 
-if __name__ == '__main__':
+if __name__ == "__main__":
     args = get_args()
 
 
 
     
     default_config = {
-        "policy_type":      "CustPolicy",
+        "policy_type":      "MlpPolicy",
         "total_timesteps":  5000,
         "env_name":         "ropeKnotting",
 
         # Simulator parameters
-        'num_workers'       : args.num_workers,
-        'save_name'         : args.save_name,
-        'headless'          : args.headless,
-        'horizon'           : args.horizon,
-        'render_mode'       : args.render_mode,
-        'render'            : not args.headless,#True,
-        'action_repeat'     : 1,
-        'use_cached_states' : True,
-        'save_cached_states': True,
-        'deterministic'     : False,
+        "num_workers"       : args.num_workers,
+        "save_name"         : args.save_name,
+        "headless"          : True,#args.headless,
+        "horizon"           : args.horizon,
+        "render_mode"       : args.render_mode,
+        "render"            : True,#not args.headless,#True,
+        "action_repeat"     : 1,
+        "use_cached_states" : True,
+        "save_cached_states": False,
+        "deterministic"     : False,
 
         # Environment parameters
-        'total_timesteps'   : args.total_steps,
-        'maximum_crossings' : args.maximum_crossings,
-        'goal_crossings'    : args.goal_crossings,
-        'num_variations'    : args.num_variations,
-        'observation_mode'  : 'key_point',
-        'action_mode'       : 'picker_trajectory',
-        'num_picker'        : 1,
-        'trajectory_funcs'  : [box_trajectory],
+        "total_timesteps"   : args.total_steps,
+        "maximum_crossings" : args.maximum_crossings,
+        "goal_crossings"    : args.goal_crossings,
+        "num_variations"    : args.num_variations,
+        "observation_mode"  : "key_point",
+        "action_mode"       : "picker_trajectory",
+        "num_picker"        : 1,
+        "goal_threshold"    : 0.4,
+        # "trajectory_funcs"  : [box_trajectory],
 
         # Training hyperparameters
-        'algorithm'         : 'SAC',
-        'learning_rate'     : 1e-3,
-        'ent_coef'          : 1e-2,
-        'gamma'             : 0.9,
-        'n_steps'           : 5,
+        "algorithm"         : "SAC",
+        "learning_rate"     : 1e-3,
+        "ent_coef"          : 1e-2,
+        "gamma"             : 0.9,
+        "n_steps"           : 5,
     }
 
-    sweep_params = {
-        "name": args.sweep_name,
-        "method": "bayes",
-        "metric":{
-            "name": "mean_reward",
-            "goal": "maximize",
-        },
-        "parameters":{
-            "learning_rate":{
-                "min": 1e-4,
-                "max": 1e-1,
-            },
-            "ent_coef":{
-                "min" : 1e-3,
-                "max" : 5e-2,
-            },
-            "gamma":{
-                "values" : [0.9,0.95,0.99]
-            },
-            "n_steps" : {
-                "values" : [5,10,15]
-            },
-        },
-        "early_terminate":{
-            "type"      : "hyperband",
-            "min_iter"  : 10,
-            "eta"       : 2
-        },
-    }  
+    # sweep_params = {
+    #     "name": args.sweep_name,
+    #     "method": "bayes",
+    #     "metric":{
+    #         "name": "mean_reward",
+    #         "goal": "maximize",
+    #     },
+    #     "parameters":{
+    #         "learning_rate":{
+    #             "min": 1e-4,
+    #             "max": 1e-1,
+    #         },
+    #         "ent_coef":{
+    #             "min" : 1e-3,
+    #             "max" : 5e-2,
+    #         },
+    #         "gamma":{
+    #             "values" : [0.9,0.95,0.99]
+    #         },
+    #         "n_steps" : {
+    #             "values" : [5,10,15]
+    #         },
+    #     },
+    #     "early_terminate":{
+    #         "type"      : "hyperband",
+    #         "min_iter"  : 10,
+    #         "eta"       : 2
+    #     },
+    # }  
 
     # wandb.init(
     #     project=args.project_name,
     # )
 
+    main(default_config)
     
-    if args.num_sweeps == 1:
-        main(default_config)
-    else:
-        sweep_id = args.sweep_id or wandb.sweep(sweep_params,project=args.project_name)
-        if args.num_sweeps == 0:
-            args.num_sweeps = None
+    # if args.num_sweeps == 1:
+    #     main(default_config)
+    # else:
+    #     sweep_id = args.sweep_id or wandb.sweep(sweep_params,project=args.project_name)
+    #     if args.num_sweeps == 0:
+    #         args.num_sweeps = None
 
-        processes = [mp.Process(target = lambda: wandb.agent(sweep_id,project = args.project_name, function= lambda :main(default_config),count=args.num_sweeps)) for _ in range(args.num_agents)]
-        for p in processes:
-            p.start()
-        for p in processes:
-            p.join()
-        # wandb.agent(sweep_id,function= lambda :main(default_config),count=args.num_sweeps)
+    #     processes = [mp.Process(target = lambda: wandb.agent(sweep_id,project = args.project_name, function= lambda :main(default_config),count=args.num_sweeps)) for _ in range(args.num_agents)]
+    #     for p in processes:
+    #         p.start()
+    #     for p in processes:
+    #         p.join()
+    #     # wandb.agent(sweep_id,function= lambda :main(default_config),count=args.num_sweeps)
 
 

@@ -97,21 +97,21 @@ def topo_to_geometry_add_C(topo:RopeTopology,action) -> Tuple[int,np.ndarray,np.
             elif over_seg == topo.size:
                 # pick_idx = over_idxs[-1]
                 pick_idxs = under_idxs
-            pick_region = p[pick_idxs,:][:,[0,2]]
-            place_region_segs = topo.get_loop(under_seg,sign)
-            place_region_idxs = []
-            for s in place_region_segs:
-                place_region_idxs.extend(topo.find_geometry_indices_matching_seg(s.segment_num))
-            place_region = p[place_region_idxs,:][:,[0,2]]
-
         else:
-            # l_pick = len(over_idxs)
-            # pick_idx = over_idxs[l_pick//2]
-            pick_idxs = over_idxs
-            pick_region = p[pick_idxs,:][:,[0,2]]
+            if under_seg == 0:
+                pick_idxs = under_idxs
+            else:
+                pick_idxs = over_idxs
+        pick_region = p[pick_idxs,:][:,[0,2]]
+        place_region_segs = topo.get_loop(under_seg,sign)
+        place_region_idxs = []
+        for s in place_region_segs:
+            place_region_idxs.extend(topo.find_geometry_indices_matching_seg(s.segment_num))
+        place_region = p[place_region_idxs,:][:,[0,2]]
 
-            l_place = len(under_idxs)
-            place_region = p[l_place//2,[0,2]].reshape([1,2])
+        # getting mid region
+        diameter = p[under_idxs,:]
+        mid_region = np.vstack([get_arc(diameter[0,[0,2]],diameter[-1,[0,2]],sign < 0,100),diameter[::-1,[0,2]]])
 
     return random.choice(pick_idxs),pick_region,mid_region,place_region
 
@@ -252,41 +252,36 @@ def main(env_kwargs,all_args):
         "pick_path":[],
         "mid_path":[],
         "place_path":[],
-        "successful":[],
+        "dones":[],
         "pick_region":[],
         "mid_region":[],
         "place_region":[],
         "topology":[],
+        "obs":[],
         "topo_actions":[],
         "actions":[],
         "topo_after":[],
+        "obs_next":[],
+        "rews":[],
     }
     
 
-    for step_num in tqdm(range(0,all_args.total_steps,all_args.num_workers)):
+    for step_num in tqdm(range(all_args.start,all_args.total_steps,all_args.num_workers)):
         env_actions = []
         topo_actions = [None]*all_args.num_workers
-        while True:
-            try:
-                if all_args.num_workers == 1:
-                    envs.generate_env_variation()
-                    rope_reps = [envs.get_topological_representation()]
-                else:
-                    envs.env_method("generate_env_variation")
-                    rope_reps = envs.env_method("get_topological_representation")
-            except InvalidTopology:
-                with open(os.path.join(all_args.save_name,"Errors.pkl"),"ab") as f:
-                    pickle.dump(envs.get_geoms(),f)
-                continue
-            break
-        if all_args.num_workers == 1:
-            before_render = [envs.render_no_gripper()]
-        else:
-            before_render = envs.env_method("render_no_gripper")
+
+        envs.env_method("generate_env_variation")
+        rope_reps = envs.env_method("get_topological_representation")
+        obs = envs.env_method("get_obs")
+
+        before_render = envs.env_method("render_no_gripper")
+
+        new_goals = []
                   
         for worker_num in range(all_args.num_workers):
 
             topo_actions[worker_num] = random.choice(all_add_C(rope_reps[worker_num]))
+            envs.env_method("assign_goal",rope_reps[worker_num].add_C(*topo_actions[worker_num])[0],indices=worker_num)
             pick_idx, pick_region,mid_region,place_region = topo_to_geometry_add_C(rope_reps[worker_num],topo_actions[worker_num])
             action_masks = get_action_masks(before_render[worker_num],pick_region.T,mid_region.T,place_region.T)
 
@@ -299,11 +294,11 @@ def main(env_kwargs,all_args):
             mid_act = mid_pos - pick_loc
             place_act = place_pos - pick_loc
 
-            env_actions.append([pick_act,*mid_act.flatten().tolist(),*place_act.flatten().tolist()])
+            env_actions.append(np.array([pick_act,*mid_act.flatten().tolist(),*place_act.flatten().tolist()]))
 
             plain_path,pick_path,mid_path,place_path = save_images(
                 all_args.save_name,
-                all_args.start + step_num + worker_num,
+                step_num + worker_num,
                 before_render[worker_num],
                 *action_masks
             )
@@ -317,30 +312,19 @@ def main(env_kwargs,all_args):
             data["mid_region"].append(mid_region)
             data["place_region"].append(place_region)
 
-        if all_args.num_workers == 1:
-            envs.step(env_actions[0])
-        else:
-            envs.step(env_actions)
+        
+        new_obs, rews, dones, infos = envs.step(env_actions)
 
-        try:
-            if all_args.num_workers == 1:
-                new_reps = [envs.get_topological_representation()]
-            else:
-                new_reps = envs.env_method("get_topological_representation")
-
-            successes = [None] * all_args.num_workers
-            for worker_num in range(all_args.num_workers):
-                successes[worker_num] = new_reps[worker_num] == rope_reps[worker_num].add_C(*topo_actions[worker_num])[0]
-        except:
-            
-            with open(os.path.join(all_args.save_name,"Errors.pkl"),"ab") as f:
-                pickle.dump(envs.get_geoms(),f)
+        new_reps = envs.env_method("get_topological_representation")
 
         data["topo_actions"].extend(topo_actions)
         data["topology"].extend(rope_reps)
         data["topo_after"].extend(new_reps)
         data["actions"].extend(env_actions)
-        data["successful"].extend(successes)
+        data["dones"].extend(dones)
+        data["obs"].extend(obs)
+        data["rews"].extend(rews)
+        data["obs_next"].extend(new_obs)
 
 
 

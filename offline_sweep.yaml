@@ -1,20 +1,23 @@
-program: trainStraightenOffline.py
+program: trainOffline.py
 method: bayes
-name : Straighten_test
+name : Knot_offline
 metric:
   goal: maximize
-  name: val_return
+  name: success_rate
+early_terminate:
+  type: hyperband
+  min_iter: 3
 parameters:
   num_layers:
     values: [1,2,3]
   hidden_layer_size:
     value: 128
   actor_lr:
-    min: 0.00001
-    max: 0.1
+    min: 0.000001
+    max: 0.01
   critic_lr:
-    min: 0.00001
-    max: 0.1
+    min: 0.000001
+    max: 0.01
   gamma:
     values: [0.9,0.95,0.99]
   min_q_weight:
@@ -26,10 +29,12 @@ parameters:
   tau:
     value: 0.000005
   max_epochs:
-    value: 200
+    value: 100
   batch_size: 
-    values: [16,32,64]
+    value: 32
   steps_per_epoch:
-    value: 500
+    value: 2000
+  goal_threshold:
+    value: 0.4
   dataset_path: 
-    value: "Datasets/Random/Data.pkl"
+    value: "Datasets/Prior/Data.pkl"

@@ -263,13 +263,13 @@ def main(env_kwargs,all_args):
         obs = envs.env_method("get_obs")
 
         rope_reps = envs.env_method("get_topological_representation")
-        before_render = envs.env_method("render_no_gripper")
+        # before_render = envs.env_method("render_no_gripper")
                   
         actions = [a_s.sample() for a_s in envs.get_attr('action_space')]
         obs_next,rews,dones,infos = envs.step(actions)
 
         new_reps = envs.env_method("get_topological_representation")
-        after_render = envs.env_method("render_no_gripper")
+        # after_render = envs.env_method("render_no_gripper")
 
         data["obs"].extend(obs)
         data["rews"].extend(rews)
@@ -280,12 +280,12 @@ def main(env_kwargs,all_args):
         data["topology_next"].extend(new_reps)
         bp = [""]*all_args.num_workers
         ap = [""]*all_args.num_workers
-        for i in range(all_args.num_workers):
-            bp[i] = os.path.join(all_args.save_name,"before",f"{all_args.start+step_num+i}.png")
-            ap[i] = os.path.join(all_args.save_name,"after",f"{all_args.start+step_num+i}.png")
+        # for i in range(all_args.num_workers):
+        #     bp[i] = os.path.join(all_args.save_name,"before",f"{all_args.start+step_num+i}.png")
+        #     ap[i] = os.path.join(all_args.save_name,"after",f"{all_args.start+step_num+i}.png")
 
-            cv2.imwrite(bp[i],before_render[i])
-            cv2.imwrite(ap[i],after_render[i])
+        #     cv2.imwrite(bp[i],before_render[i])
+        #     cv2.imwrite(ap[i],after_render[i])
         data["plain_before"].extend(bp)
         data["plain_after"].extend(ap)
 

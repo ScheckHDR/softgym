@@ -68,7 +68,8 @@ def convert_topo_rep(topo,workspace,obs_spaces):
     }
 
 class RopeKnotEnv(RopeNewEnv):
-    def __init__(self, goal_topology = None,cached_states_path='rope_knot_init_states.pkl', **kwargs):
+    ROPE_LINK_LENGTH = 0.0135 # approximate length of a single link. Seems to be some ability to stretch.
+    def __init__(self, goal = None,cached_states_path='rope_knot_init_states.pkl', **kwargs):
         kwargs['action_mode'] = 'picker_trajectory'
         super().__init__(cached_states_path=cached_states_path,**kwargs)
         
@@ -95,18 +96,15 @@ class RopeKnotEnv(RopeNewEnv):
 
         self.task = kwargs["task"].upper()
         if self.task == "KNOT":
-            dim = points*3 + 3
+            dim = (points-1)*3 + 4
         elif self.task == "STRAIGHT":
-            dim = points*3 + 3
+            dim = (points-1)*3 + 4
         elif self.task == "CORNER":
             dim = 6
         self.observation_space = Box(low=-np.ones((1,dim)),high=np.ones((1,dim)))
 
         self.workspace =np.array([[-0.35,0.35],[-0.35,0.35]])
-        if goal_topology is not None:
-            self.goal_configuration = deepcopy(goal_topology)
-        else:
-            self.goal_configuration = deepcopy(RopeTopology.random(self.goal_crossings))
+        self.goal = goal
               
     def _reset(self):
         
@@ -173,7 +171,7 @@ class RopeKnotEnv(RopeNewEnv):
 
     def compute_reward(self, action=None, obs=None, **kwargs):
         if self.task == "STRAIGHT":
-            reward = np.linalg.norm(self.get_geoms()[-1,:])
+            reward = int(self._is_done())#np.linalg.norm(self.get_geoms()[-1,:]) - 0.5
         elif self.task == "KNOT":
             reward = self._is_done()-1
         return reward
@@ -206,9 +204,10 @@ class RopeKnotEnv(RopeNewEnv):
         return RopeTopology.from_geometry(self.get_geoms(),plane_normal=np.array([0,1,0]))
 
     def _is_done(self):
-        # return RopeTopology.is_equivalent(self.get_topological_representation(),self.goal_configuration,False,False)
-        return False
-        
+        if self.task == "KNOT":
+            return RopeTopology.is_equivalent(self.get_topological_representation(),self.goal,False,False)
+        elif self.task == "STRAIGHT":
+            return np.linalg.norm(self.get_geoms()[-1,:]) > self.goal
     def _step(self, action):
         action = action.flatten()
         rope = self.get_geoms()
@@ -250,17 +249,21 @@ class RopeKnotEnv(RopeNewEnv):
             disturb_rope(pick_id)
 
     def _get_obs(self):
-        # self.get_topological_representation()
         geoms = self.get_geoms()
+        deltas = geoms[1:,:] - geoms[:-1,:] 
+        deltas = rescale(deltas,-RopeKnotEnv.ROPE_LINK_LENGTH,RopeKnotEnv.ROPE_LINK_LENGTH,-1,1)
         x,y,z,theta = self.get_rope_frame()
+
         if self.task == "KNOT":
-            return np.hstack([np.array([x,z,theta]),geoms.flatten()])
+            obs = np.hstack([np.array([x,y,z,theta]),deltas.flatten()])
         elif self.task == "STRAIGHT":
-            return np.expand_dims(np.hstack([np.array([x,z,theta]),geoms.flatten()]),0)
+            obs = np.hstack([np.array([x,y,z,theta]),deltas.flatten()])
         elif self.task == "CORNER":
-            return np.hstack([np.array([x,z,theta]),geoms[0,:].flatten()])
+            obs = np.array([x,y,z,theta])
         else:
             raise Exception(f"Unknown observation required. Observations must be any of {{KNOT,STRAIGHT,CORNER}}, not {self.task}")
+        
+        return np.expand_dims(obs,0)
     def get_obs(self):
         return self._get_obs()
 
@@ -275,6 +278,8 @@ class RopeKnotEnv(RopeNewEnv):
         self.action_tool.step(np.array([1,1,1,1],ndmin=2),renderer = lambda *args,**kwargs : None)
         return cv2.cvtColor(super().render(mode=mode)[-self.camera_height:,:self.camera_width,:],cv2.COLOR_RGB2BGR)
 
+    def assign_goal(self,goal):
+        self.goal = goal
 
 ######### Helper Functions
 def disturb_rope(move_idx:int,amount:float=5e-3):

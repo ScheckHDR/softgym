@@ -798,37 +798,37 @@ class RopeTopology:
         r1_rep = np.hstack([T,N])
         return RopeTopology(r1_rep[:,r1_rep[0,:].argsort()])
     
-    def add_C(self,over_ind:int,under_ind:int,sign:int,under_first:bool) -> Tuple["RopeTopology",List[int]]:
-        assert over_ind in [0,self.size] or under_ind in [0,self.size], f'C moves require at least one of the affected indices to be the end of the rope.'         
+    def add_C(self,action:"RopeTopologyAction") -> Tuple["RopeTopology",List[int]]:
+        assert action.over_seg in [0,self.size] or action.under_seg in [0,self.size], f'C moves require at least one of the affected indices to be the end of the rope.'         
         T = deepcopy(self.rep)
 
-        if over_ind > under_ind:
+        if action.over_seg > action.under_seg:
             N = np.array([
-                [under_ind,over_ind+1],
-                [over_ind+1,under_ind],
+                [action.under_seg,action.over_seg+1],
+                [action.over_seg+1,action.under_seg],
                 [-1,1],
-                [sign,sign]
+                [action.chirality,action.chirality]
             ])
-            over_segs = [over_ind+1,over_ind+2]
-        elif under_ind > over_ind:
+            over_segs = [action.over_seg+1,action.over_seg+2]
+        elif action.under_seg > action.over_seg:
             N = np.array([
-                [over_ind,under_ind+1],
-                [under_ind+1,over_ind],
+                [action.over_seg,action.under_seg+1],
+                [action.under_seg+1,action.over_seg],
                 [1,-1],
-                [sign,sign]
+                [action.chirality,action.chirality]
             ])
-            over_segs = [over_ind,over_ind+1]
+            over_segs = [action.over_seg,action.over_seg+1]
         else:
             N = np.array([
-                [over_ind,under_ind+1],
-                [under_ind+1,over_ind],
+                [action.over_seg,action.under_seg+1],
+                [action.under_seg+1,action.over_seg],
                 [-1,1] if under_first else [1,-1],
-                [sign,sign]
+                [action.chirality,action.chirality]
             ])
-            over_segs = [over_ind,over_ind+1]
+            over_segs = [action.over_seg,action.over_seg+1]
 
-        T[np.where(T[:2,:] >= max(over_ind,under_ind))] += 1
-        T[np.where(T[:2,:] >= min(over_ind,under_ind))] += 1
+        T[np.where(T[:2,:] >= max(action.over_seg,action.under_seg))] += 1
+        T[np.where(T[:2,:] >= min(action.over_seg,action.under_seg))] += 1
 
         r2_rep = np.hstack([T,N])
         r2_rep = r2_rep[:,r2_rep[0,:].argsort()]
@@ -1038,6 +1038,16 @@ def find_grid_path(start,end,occupancy) -> np.ndarray:
 
 
 ####### Topological Planning
+
+class RopeTopologyAction:
+    def __init__(self,type:str,over_seg:int,chirality:bool,under_seg:Union[int,None]):
+        type.upper()
+        assert type in ["+C","-C","+R1","-R1"], f"Action type not supported."
+        self.type = type
+        self.over_seg = over_seg
+        self.under_seg = under_seg
+        self.chirality = chirality
+
 class RopeTopologyNode:
     def __init__(self,value:RopeTopology,priority:int,parent:Union[None,RopeTopology]=None,action=None):
         self.value = value
@@ -1062,7 +1072,7 @@ class RopeTopologyNode:
             t = self.parent
         return i
 
-def find_topological_path(start:RopeTopology,end:RopeTopology,max_rep_size = np.inf) -> List[RopeTopology]:
+def find_topological_path(start:RopeTopology,end:RopeTopology,max_rep_size = np.inf) -> List[RopeTopologyNode]:
 
     frontier = PriorityQueue()
     frontier.put((0,RopeTopologyNode(start,0)))
@@ -1084,20 +1094,20 @@ def find_topological_path(start:RopeTopology,end:RopeTopology,max_rep_size = np.
             return 
         for over_seg in range(current.value.size+1):
             for under_seg in range(current.value.size+1):
-                for sign in [-1,1]:
+                for chirality in [-1,1]:
                     if over_seg in [0,current.value.size] or under_seg in [0,current.value.size]:
                         for under_first in ([False,True] if over_seg == under_seg else [False]):
+                            action = RopeTopologyAction("+C",over_seg,chirality,under_seg)
                             try:
-                                action_args = [over_seg,under_seg,sign,under_first]
-                                test, after_action_segs = current.value.add_C(*action_args,return_raw=True)
+                                test, after_action_segs = current.value.add_C(action,return_raw=True)
                                 if end == test:
-                                    return RopeTopologyNode(end,0,parent=current,action = ["+C",action_args,after_action_segs])
+                                    return RopeTopologyNode(end,0,parent=current,action = action)
                                 if test.shape[1] >= max_rep_size:
                                     continue
                                 if test not in visited and test not in frontier.queue:
                                     new_topo = RopeTopology(test,check_validity=False)
                                     dist = distance_func(new_topo,end) + (0.5 if over_seg == under_seg else 0) + (0.5 if current.action is not None and over_seg in current.action[1] else 0)
-                                    frontier.put((dist,RopeTopologyNode(new_topo,dist,parent=current,action = ["+C",action_args,after_action_segs])))
+                                    frontier.put((dist,RopeTopologyNode(new_topo,dist,parent=current,action = action)))
                             except InvalidTopology:
                                 pass
     def explore_remove_C(current):

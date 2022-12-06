@@ -141,7 +141,9 @@ class TopologyMix(SAC):
     def _get_model_dist(self):
         return None
 
-    def _get_topology_dist(self):
-        return None
+    def _get_topology_dist(self,topo_state:RopeTopology,goal_topo:RopeTopology):
+        plan = find_topological_path(topo_state,goal_topo)
+
+        action = plan[0]
 
 

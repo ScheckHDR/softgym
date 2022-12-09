@@ -1,6 +1,8 @@
 import numpy as np
 from typing import Any, Dict, List, Optional, Tuple, Type, Union
 
+import torch
+import cv2
 import gym
 from stable_baselines3 import SAC
 from stable_baselines3.common.buffers import ReplayBuffer
@@ -12,11 +14,12 @@ from stable_baselines3.common.vec_env import VecEnv
 from torch.distributions.normal import Normal
 
 
-from softgym.utils.topology import RopeTopology, find_topological_path
+import softgym.utils.topology as topology
+
 
 class TopologyMix(SAC):
-    def __init__(self,**kwargs):
-        super().__init__(**kwargs)
+    def __init__(self,*args,**kwargs):
+        super().__init__(*args,**kwargs)
 
     def collect_rollouts(
         self,
@@ -122,28 +125,137 @@ class TopologyMix(SAC):
 
     def predict(
         self,
-        observation: Union[np.ndarray, Dict[str, np.ndarray]],
+        observation: np.ndarray,
         state: Optional[Tuple[np.ndarray, ...]] = None,
         episode_start: Optional[np.ndarray] = None,
         deterministic: bool = False,
     ) -> Tuple[np.ndarray, Optional[Tuple[np.ndarray, ...]]]:
 
-        policy_dist:Normal = self._get_model_dist()
+        goal = self.env.get_attr("goal")[0]
+        img=self.env.env_method("render_no_gripper")[0]
+        topo_state = self.env.env_method("get_topological_representation")[0]
 
-        topo_dist:Normal = self._get_topology_dist()
+        
 
-        combined_mu = (policy_dist.loc*policy_dist.stddev**2 + topo_dist.loc*topo_dist.stddev**2) / (policy_dist.stddev**2 + topo_dist.stddev**2) 
-        combined_std = np.sqrt((policy_dist.stddev**2 * topo_dist.stddev**2)/(policy_dist.stddev**2 + topo_dist.stddev**2))
-        combined_dist = Normal(combined_mu,combined_std)
+        topo_plan = topology.find_topological_path(topo_state,goal,goal.size)
+        pick_idxs, pick_region,mid_region,place_region = topology.topo_to_geometry(topo_state,action=topo_plan[1].action)
 
-        return (combined_dist.sample().cpu().numpy(),)
+        pick_mu = pick_idxs[len(pick_idxs)//2] / 40
+        pick_std = (len(pick_idxs)//2) / 41
+
+        pick_mid_abs = pick_region[pick_region.shape[0]//2,:]
+        mid_region_rel = mid_region - pick_mid_abs
+        place_region_rel = place_region - pick_mid_abs
+
+        mid_x_mu, mid_y_mu = np.mean(mid_region_rel,axis=0)
+        mid_x_std, mid_y_std = (np.max(mid_region,axis=0) - np.min(mid_region,axis=0)) / 2
+
+        place_x_mu, place_y_mu = np.mean(place_region_rel,axis=0)
+        place_x_std, place_y_std = (np.max(place_region,axis=0) - np.min(place_region,axis=0)) / 2
+
+        prior_mus = torch.tensor(np.array([pick_mu,mid_x_mu,mid_y_mu,place_x_mu,place_y_mu])).to("cuda")
+        prior_stds = torch.tensor(np.array([pick_std,mid_x_std,mid_y_std,place_x_std,place_y_std])).to("cuda")
+        prior_stds = torch.max(prior_stds,torch.ones_like(prior_stds)*0.01)
+
+        policy_mus, policy_stds,_ = self.actor.get_action_dist_params(torch.tensor(observation).to("cuda"))
+
+        combined_mus = (prior_mus*policy_stds**2 + policy_mus*prior_stds**2)/(policy_stds**2 + prior_stds**2)
+        combined_stds = torch.sqrt((policy_stds**2 * prior_stds**2)/(prior_stds**2 + policy_stds**2))
+
+        combined_normal = Normal(combined_mus,combined_stds)
+
+
+
+        # For visualising.
+        x,y,z,theta = self.env.env_method("get_rope_frame")[0]
+        T_mat = np.array([
+            [np.cos(theta),np.sin(theta),x],
+            [-np.sin(theta),np.cos(theta),z],
+            [0,0,1]
+        ])
+        show_prior_on_image(img,pick_region,mid_region,place_region,lambda x: T_mat@x)
+
+        # test = super().predict(observation,state,episode_start,deterministic)
+        return combined_normal.rsample().detach().cpu().numpy(),None
+
+
+        
+
+
 
     def _get_model_dist(self):
         return None
 
-    def _get_topology_dist(self,topo_state:RopeTopology,goal_topo:RopeTopology):
-        plan = find_topological_path(topo_state,goal_topo)
-
-        action = plan[0]
 
 
+
+########################## Helper Functions
+def show_prior_on_image(img:np.ndarray,pick_region:np.ndarray,mid_region:np.ndarray,place_region:np.ndarray,data_transform = lambda x: x):
+    h = img.shape[0]
+    w = img.shape[1]
+    s = 0.35
+    homography,_ = cv2.findHomography(
+        np.array([
+            [-s, s, s,-s],
+            [-s,-s, s, s],
+            [ 1, 1, 1, 1],
+
+        ]).T,
+        np.array([
+            [0,w,w,0],
+            [0,0,h,h],
+            [1,1,1,1],
+        ]).T
+    )
+
+    # Ensure regions are column vectors
+    if pick_region.shape[0] != 2:
+        pick_region = pick_region.T
+    assert pick_region.shape[0] == 2
+    if mid_region is None:
+        mid_region = np.array([0,0],ndmin=2)
+    if mid_region.shape[0] != 2:
+        mid_region = mid_region.T
+    assert mid_region.shape[0] == 2
+    if place_region.shape[0] != 2:
+        place_region = place_region.T
+    assert place_region.shape[0] == 2
+
+    pick_h = np.vstack([pick_region,np.ones(pick_region.shape[1])])
+    mid_h = np.vstack([mid_region,np.ones(mid_region.shape[1])])
+    place_h = np.vstack([place_region,np.ones(place_region.shape[1])])
+
+    pick_img_p = (homography @ data_transform(pick_h))[:2,:]
+    mid_img_p = (homography @ data_transform(mid_h))[:2,:]
+    place_img_p = (homography @ data_transform(place_h))[:2,:]
+
+
+
+    pick_frame = cv2.polylines(
+        np.zeros_like(img),
+        [pick_img_p.T.astype(np.int32)],
+        isClosed=False,
+        thickness=3,
+        color=(0,255,0)
+    )
+    mid_frame = cv2.fillPoly(
+        np.zeros_like(img),
+        [mid_img_p.T.astype(np.int32)],
+        color=(0,0,255)
+    )
+    place_frame = cv2.fillPoly(
+        np.zeros_like(img),
+        [place_img_p.T.astype(np.int32)],
+        color=(255,0,0)
+    )
+
+    info_img = cv2.addWeighted(pick_frame,1,cv2.addWeighted(mid_frame,1,place_frame,1,0),1,0)
+    img_final = cv2.addWeighted(info_img,0.5,img,0.5,0)
+
+    # img_p = cv2.bitwise_or(img,pick_frame)
+    # img_m = cv2.bitwise_or(img_p,mid_frame)
+    # img_final = cv2.bitwise_or(img_m,place_frame)
+
+
+    cv2.imshow("action_vis",img_final)
+    cv2.waitKey(1)

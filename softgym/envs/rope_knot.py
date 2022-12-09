@@ -6,13 +6,15 @@ import pyflex
 from softgym.envs.rope_env import RopeNewEnv
 from copy import deepcopy
 from softgym.utils.pyflex_utils import random_pick_and_place, center_object
-from softgym.utils.topology import *
+import softgym.utils.topology as topology
 from softgym.action_space.action_space import PickerTraj
 from gym.spaces import Box, Discrete, Dict
 from softgym.utils.trajectories import simple_trajectory
 
 import time
+import random
 import cv2
+from tqdm import tqdm
 
 def convert_topo_rep(topo,workspace,obs_spaces):
     N = topo.size
@@ -129,43 +131,43 @@ class RopeKnotEnv(RopeNewEnv):
 
         while True:
             try:
-                obs = self._get_obs()
-            except InvalidGeometry as e:
+                self.get_topological_representation()
+            except topology.InvalidGeometry as e:
                 pick_id = int(str(e).replace('.','').split(' ')[-1])
                 disturb_rope(pick_id)
                 continue
             break
+        obs = self._get_obs()
         return obs
 
     def generate_env_variation(self, num_variations=1, config=None, save_to_file=False, **kwargs):
         
         generated_configs, generated_states = [], []
 
-        while True:
-            if config is None:
-                config = self.get_default_config()
-            for _ in range(num_variations):
-                config_variation = deepcopy(config)
+        if config is None:
+            config = self.get_default_config()
+        print("Generating Variations")
+        for _ in tqdm(range(num_variations)):
+            config_variation = deepcopy(config)
 
-                # Place random variations here
-                # ----------------------------
-                self.set_scene(config_variation)
+            # Place random variations here
+            # ----------------------------
+            self.set_scene(config_variation)
 
-                self.update_camera('default_camera',config_variation['camera_params']['default_camera'])
-                self.action_tool.reset([0., -1., 0.])
-
+            self.update_camera('default_camera',config_variation['camera_params']['default_camera'])
+            self.action_tool.reset([0., -1., 0.])
+            while True:
                 random_pick_and_place(pick_num=4, pick_scale=0.005)
                 center_object()
 
                 generated_configs.append(deepcopy(config_variation))
                 generated_states.append(deepcopy(self.get_state()))
-            try:
-                self.get_topological_representation()
-            except InvalidGeometry as e:
-                pick_id = int(str(e).replace('.','').split(' ')[-1])
-                disturb_rope(pick_id)   
-                continue
-            break
+                try:
+                    self.get_topological_representation()
+                except topology.InvalidGeometry as e:
+                    continue
+                break
+
 
         return generated_configs, generated_states
 
@@ -174,6 +176,26 @@ class RopeKnotEnv(RopeNewEnv):
             reward = int(self._is_done())#np.linalg.norm(self.get_geoms()[-1,:]) - 0.5
         elif self.task == "KNOT":
             reward = self._is_done()-1
+        elif "KNOT_ACTION" in self.task:
+            action_type = self.task.split("_")[-1]
+
+            if action_type == "+C":
+                num_action_params = 3
+            elif action_type == "-C":
+                num_action_params = 1
+            elif action_type == "+R1":
+                num_action_params = 3
+            else:
+                raise NotImplementedError
+
+            topo_action_args = obs[-num_action_params:]
+            topo_action = topology.RopeTopologyAction(action_type,*topo_action_args)
+            if self.previous_topology.add_C(topo_action) == self.get_topological_representation():
+                reward = 1
+            else:
+                reward = 0
+        else:
+            raise NotImplementedError
         return reward
 
     def get_geoms(self):
@@ -201,14 +223,15 @@ class RopeKnotEnv(RopeNewEnv):
 
     def get_topological_representation(self):
         
-        return RopeTopology.from_geometry(self.get_geoms(),plane_normal=np.array([0,1,0]))
+        return topology.RopeTopology.from_geometry(self.get_geoms(),plane_normal=np.array([0,1,0]))
 
     def _is_done(self):
         if self.task == "KNOT":
-            return RopeTopology.is_equivalent(self.get_topological_representation(),self.goal,False,False)
+            return topology.RopeTopology.is_equivalent(self.get_topological_representation(),self.goal,False,False)
         elif self.task == "STRAIGHT":
             return np.linalg.norm(self.get_geoms()[-1,:]) > self.goal
     def _step(self, action):
+        self.previous_topology = self.get_topological_representation()
         action = action.flatten()
         rope = self.get_geoms()
         rope_frame = self.get_rope_frame()
@@ -242,7 +265,7 @@ class RopeKnotEnv(RopeNewEnv):
 
         try:
             self.get_topological_representation()
-        except InvalidGeometry as e:
+        except topology.InvalidGeometry as e:
             id1 = int(str(e).replace('.','').split(' ')[-1])
             id2 = int(str(e).replace('.','').split(' ')[-3])
             pick_id = id1 if abs(id1-pick_idx) < abs(id2-pick_idx) else id2
@@ -280,6 +303,48 @@ class RopeKnotEnv(RopeNewEnv):
 
     def assign_goal(self,goal):
         self.goal = goal
+
+    def get_cached_configs_and_states(self, cached_states_path, num_variations):
+        """
+        If the path exists, load from it. Should be a list of (config, states)
+        :param cached_states_path:
+        :return:
+        """
+        if self.cached_init_states is None:
+            self.cached_configs = []
+        if self.cached_init_states is None:
+            self.cached_init_states = []
+
+        if self.cached_configs is not None and self.cached_init_states is not None and len(self.cached_configs) == num_variations:
+            return self.cached_configs, self.cached_init_states
+        if not cached_states_path.startswith('/'):
+            cur_dir = osp.dirname(osp.abspath(__file__))
+            cached_states_path = osp.join(cur_dir, '../cached_initial_states', cached_states_path)
+        if self.use_cached_states and osp.exists(cached_states_path):
+            # Load from cached file
+            with open(cached_states_path, "rb") as handle:
+                self.cached_configs, self.cached_init_states = pickle.load(handle)
+            print('{} config and state pairs loaded from {}'.format(len(self.cached_init_states), cached_states_path))
+            if len(self.cached_configs) == num_variations:
+                return self.cached_configs, self.cached_init_states
+            elif len(self.cached_configs) > num_variations:
+                pairs = random.sample([list(z) for z in zip(self.cached_configs,self.cached_init_states)],k=num_variations)
+                self.cached_configs = [p[0] for p in pairs]
+                self.cached_init_states = [p[1] for p in pairs]
+                return self.cached_configs, self.cached_init_states
+            else:
+                num_variations -= len(self.cached_configs)
+
+        additional_cached_configs, additional_cached_init_states = self.generate_env_variation(num_variations)
+        self.cached_configs.extend(additional_cached_configs)
+        self.cached_init_states.extend(additional_cached_init_states)
+
+        if self.save_cached_states:
+            with open(cached_states_path, 'wb') as handle:
+                pickle.dump((self.cached_configs, self.cached_init_states), handle, protocol=pickle.HIGHEST_PROTOCOL)
+            print('{} config and state pairs generated and saved to {}'.format(len(self.cached_init_states), cached_states_path))
+
+        return self.cached_configs, self.cached_init_states
 
 ######### Helper Functions
 def disturb_rope(move_idx:int,amount:float=5e-3):

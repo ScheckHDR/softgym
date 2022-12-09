@@ -14,7 +14,7 @@ from typing import List
 from softgym.envs.rope_knot import RopeKnotEnv
 from stable_baselines3.common.vec_env.subproc_vec_env import SubprocVecEnv
 
-from softgym.utils.topology import RopeTopology, InvalidTopology
+import softgym.utils.topology as topology
 
 class RopeDataset(Dataset):
     def __init__(self,data_file):
@@ -37,9 +37,9 @@ class RopeDataset(Dataset):
         self.df = pd.DataFrame({
             "rew": data["rews"],
             "done": data["rews"],
-            "obs": [np.concatenate(a,axis=1) for a in zip(data["obs"],np.expand_dims(data["topo_actions"],1))],
+            "obs": [np.concatenate(a,axis=1) for a in zip(data["obs"],np.expand_dims([d[:-1] for d in data["topo_actions"]],1))],
             "act":data["actions"],
-            "obs_next":[np.concatenate(a,axis=1) for a in zip(data["obs_next"],np.zeros_like(np.expand_dims(data["topo_actions"],1)))],
+            "obs_next":[np.concatenate(a,axis=1) for a in zip(data["obs_next"],np.zeros_like(np.expand_dims([d[:-1] for d in data["topo_actions"]],1)))],
         })
 
     def __len__(self):
@@ -52,22 +52,39 @@ class RopeDataset(Dataset):
         return data.to_dict()
 
 
-def all_add_C(topo:RopeTopology) -> List[np.ndarray]:
+def all_add_C(topo:topology.RopeTopology) -> List[topology.RopeTopologyAction]:
     added = []
     for over_seg in range(topo.size+1):
         for under_seg in range(topo.size+1):
-            for sign in [-1,1]:
+            if over_seg == under_seg:
+                continue
+            for chirality in [-1,1]:
                 if over_seg in [0,topo.size] or under_seg in [0,topo.size]:
-                    for under_first in ([False,True] if over_seg == under_seg else [False]):
-                        try:
-                            action_args = [over_seg,under_seg,sign,under_first]
-                            test, _ = topo.add_C(*action_args)
-                            added.append(action_args)
-                        except InvalidTopology:
-                            pass
+                    action = topology.RopeTopologyAction("+C",over_seg,chirality,under_seg)
+                    try:
+                        new_topo, _ = topo.add_C(action) # just done to ensure action is valid.
+                        added.append(action)
+                    except topology.InvalidTopology:
+                        pass
+    return added
+def all_add_R1(topo:topology.RopeTopology) -> List[topology.RopeTopologyAction]:
+    added = []
+    for seg in range(topo.size+1):
+        for chirality in [-1,1]:
+            for starts_over in [True,False]:
+                action = topology.RopeTopologyAction("+R1",seg,chirality,starts_over=starts_over)
+                try:
+                    new_topo,_ = topo.add_R1(action)
+                    added.append(action)
+                except topology.InvalidTopology:
+                    pass
     return added
 
-
+def all_add_actions(topo:topology.RopeTopology) -> List[topology.RopeTopologyAction]:
+    added = []
+    added.extend(all_add_C(topo))
+    added.extend(all_add_R1(topo))
+    return added
 
 def callback_list(callbacks):
     if not isinstance(callbacks,List):
@@ -120,11 +137,11 @@ def validation_callback(envs:SubprocVecEnv,val_freq:int=1,num_runs_per_env:int=1
                     reps = envs.env_method("get_topological_representation")
                     topo_actions = []
                     for worker_num in range(envs.num_envs):
-                        topo_actions.append(random.choice(all_add_C(reps[worker_num])))
-                        envs.env_method("assign_goal",reps[worker_num].add_C(*topo_actions[worker_num])[0])
+                        topo_actions.append(random.choice(all_add_actions(reps[worker_num])))
+                        envs.env_method("assign_goal",reps[worker_num].take_action(topo_actions[worker_num])[0])
 
                     for _ in range(envs.get_attr("horizon")[0] - 1):
-                        obs_with_topo = [np.concatenate(a,axis=1) for a in zip(obs,np.expand_dims(topo_actions,1))]
+                        obs_with_topo = [np.concatenate(a,axis=1) for a in zip(obs,np.expand_dims([a.as_array for a in topo_actions],1))]
                         action_dists = actor(torch.tensor(obs_with_topo).float().to("cuda"))
                         actions = action_dists.mode.cpu().numpy()
                         std.append(np.mean(action_dists.normal_std.cpu().numpy(),axis=1))
@@ -264,7 +281,7 @@ if __name__ == '__main__':
         "deterministic"     : False,
         # "trajectory_funcs"  : [box_trajectory],
         # "maximum_crossings" : args.maximum_crossings,
-        "goal" : wandb.config.goal,
+        "goal" : topology.COMMON_KNOTS[wandb.config.goal],#wandb.config.goal,
         "goal_crossings"    : 3,
         "task" : "KNOT"
     }

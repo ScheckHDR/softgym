@@ -34,7 +34,7 @@ parameters:
     value: 32
   steps_per_epoch:
     value: 2000
-  goal_threshold:
-    value: 0.4
+  goal:
+    value: "trefoil_knot_O-"
   dataset_path: 
     value: "Datasets/Prior/Data.pkl"

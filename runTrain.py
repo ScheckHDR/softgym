@@ -7,7 +7,8 @@ import multiprocessing as mp
 import gym
 from softgym.envs.rope_knot import RopeKnotEnv
 from softgym.utils.normalized_env import normalize
-# from softgym.utils.trajectories import box_trajectory, curved_trajectory, curved_trajectory
+import softgym.utils.topology as topology
+from CustAlgs.PriorMix import TopologyMix
 
 from stable_baselines3 import A2C, SAC, PPO, DQN
 from stable_baselines3.sac.policies import MultiInputPolicy
@@ -131,8 +132,8 @@ def main(default_config):
         "deterministic": wandb.config.deterministic,
         "maximum_crossings": wandb.config.maximum_crossings,
         "goal_crossings": wandb.config.goal_crossings,
-        "goal": wandb.config.goal_threshold,
-        "task": "STRAIGHT",
+        "goal": topology.COMMON_KNOTS["trefoil_knot_O-"],
+        "task": "KNOT",
 
     }
     
@@ -149,10 +150,12 @@ def main(default_config):
     try:
         
         envs = normalize(RopeKnotEnv(**env_kwargs))
-        model = SAC(
+        # model = SAC(
+        model = TopologyMix(
             wandb.config.policy_type,
             envs,
             verbose = 1,
+            learning_starts=0,
             **training_kwargs  
         )
 
@@ -165,13 +168,15 @@ def main(default_config):
                     model_save_freq=500,
                     model_save_path=os.path.join("./wandb_sweeps",wandb.config.save_name),
                     verbose=2,
+                    
                 ),
                 CustomCallback(verbose=2),
             ])
         )
     except Exception as e:
-        print(e)
         envs.close()
+        raise e
+    
     # except:
     #     pass
     # finally:
@@ -192,17 +197,15 @@ def get_args():
     
     parser.add_argument("--save_name",type=str,default="./output/TEMP",help="The directory to place generated models.")
     parser.add_argument("--num_workers",type=int,default=1,help="How many workers to run in parallel generating data for the model being trained.")
-    parser.add_argument("--num_agents",type=int,default=1)
 
     # Environment options
-    parser.add_argument("--num_variations", type=int, default=1, help="Number of environment variations to be generated")
+    parser.add_argument("--num_variations", type=int, default=500, help="Number of environment variations to be generated")
     parser.add_argument("--horizon",type=int,default=5,help="The length of each episode.")
     parser.add_argument("--pickers",type=int,default=2)
     parser.add_argument("--render_mode",type=str,default="cloth",help="The render mode of the object. Must be from the set \{cloth, particle, both\}.")
     parser.add_argument("--maximum_crossings",type=int,default=2,help="The maximum number of crossings for topological representations. Any representation exceeding this will be clipped down.")
     parser.add_argument("--goal_crossings",type=int,default=1,help="The number of crossings used for the goal configuration.")
     parser.add_argument("--total_steps",type=int,default=5000)
-    parser.add_argument("--num_sweeps",type=int,default=1,help="The number of runs to do in a sweep. If set to one, will default to doing a single run outside of a sweep setting. If set to 0, will keep sweeping indefinitely.")
     parser.add_argument("--sweep_id",type=str,default=None)
     parser.add_argument("--project_name",type=str,default="Rope_RL")
     parser.add_argument("--sweep_name",type=str,default="test")
@@ -219,8 +222,6 @@ def get_args():
     assert args.horizon > 0, f"Horizon length must be a positive integer. You entered {args.horizon}."
     assert args.pickers > 0, f"Number of pickers must be a positive integer. You entered {args.pickers}."
     assert args.render_mode in ("cloth","particle","both"), f"Render_mode must be from the set {{cloth, particle, both}}. You entered {args.render_mode}."
-    assert args.num_sweeps >= 0, f"num_sweeps must be a positive whole number. You entered {args.num_sweeps}"
-    assert args.num_agents > 0, f"num_agents must be a positive integer, not {args.num_agents}"
 
     return args
 

@@ -8,7 +8,8 @@ import gym
 from softgym.envs.rope_knot import RopeKnotEnv
 from softgym.utils.normalized_env import normalize
 import softgym.utils.topology as topology
-from CustAlgs.PriorMix import TopologyMix
+from CustAlgs.PriorMix import TopologyMix, QT_OPT
+
 
 from stable_baselines3 import A2C, SAC, PPO, DQN
 from stable_baselines3.sac.policies import MultiInputPolicy
@@ -26,6 +27,7 @@ import wandb
 from wandb.integration.sb3 import WandbCallback
 
 import os
+import cv2
 
 
 def const__schedule(init_val:float):
@@ -94,9 +96,9 @@ class CustomCallback(BaseCallback):
         if not self.first_iter:
             wandb.log({
                 "mean_reward":  self.model.logger.name_to_value["rollout/ep_rew_mean"],
-                "timesteps":    self.model.logger.name_to_value["time/total_timesteps"],
-                "policy_loss":  self.model.logger.name_to_value["train/policy_loss"],
-                "value_loss":   self.model.logger.name_to_value["train/value_loss"]
+                # "timesteps":    self.model.logger.name_to_value["time/total_timesteps"],
+                # "policy_loss":  self.model.logger.name_to_value["train/policy_loss"],
+                # "value_loss":   self.model.logger.name_to_value["train/value_loss"]
             })
         self.first_iter = False
 
@@ -133,7 +135,7 @@ def main(default_config):
         "maximum_crossings": wandb.config.maximum_crossings,
         "goal_crossings": wandb.config.goal_crossings,
         "goal": topology.COMMON_KNOTS["trefoil_knot_O-"],
-        "task": "KNOT",
+        "task": "KNOT_ACTION_+R1",
 
     }
     
@@ -152,6 +154,7 @@ def main(default_config):
         envs = normalize(RopeKnotEnv(**env_kwargs))
         # model = SAC(
         model = TopologyMix(
+        # model = QT_OPT(
             wandb.config.policy_type,
             envs,
             verbose = 1,
@@ -194,6 +197,8 @@ def get_args():
     parser = argparse.ArgumentParser()
     
     parser.add_argument("-headless", action="store_true", help="Whether to run the environment with headless rendering")
+    parser.add_argument("-use_new", action="store_true", help="Whether to use the saved configurations or generate completely new configurations.")
+    parser.add_argument("-save_states", action="store_true", help="Whether to save the configurations used.")
     
     parser.add_argument("--save_name",type=str,default="./output/TEMP",help="The directory to place generated models.")
     parser.add_argument("--num_workers",type=int,default=1,help="How many workers to run in parallel generating data for the model being trained.")
@@ -201,13 +206,13 @@ def get_args():
     # Environment options
     parser.add_argument("--num_variations", type=int, default=500, help="Number of environment variations to be generated")
     parser.add_argument("--horizon",type=int,default=5,help="The length of each episode.")
-    parser.add_argument("--pickers",type=int,default=2)
+    parser.add_argument("--pickers",type=int,default=1)
     parser.add_argument("--render_mode",type=str,default="cloth",help="The render mode of the object. Must be from the set \{cloth, particle, both\}.")
     parser.add_argument("--maximum_crossings",type=int,default=2,help="The maximum number of crossings for topological representations. Any representation exceeding this will be clipped down.")
     parser.add_argument("--goal_crossings",type=int,default=1,help="The number of crossings used for the goal configuration.")
     parser.add_argument("--total_steps",type=int,default=5000)
     parser.add_argument("--sweep_id",type=str,default=None)
-    parser.add_argument("--project_name",type=str,default="Rope_RL")
+    parser.add_argument("--project_name",type=str,default="Topological_Biasing")
     parser.add_argument("--sweep_name",type=str,default="test")
 
     parser.add_argument("--ent_coef")
@@ -239,13 +244,13 @@ if __name__ == "__main__":
         # Simulator parameters
         "num_workers"       : args.num_workers,
         "save_name"         : args.save_name,
-        "headless"          : True,#args.headless,
+        "headless"          : args.headless,
         "horizon"           : args.horizon,
         "render_mode"       : args.render_mode,
-        "render"            : True,#not args.headless,#True,
+        "render"            : True,
         "action_repeat"     : 1,
-        "use_cached_states" : True,
-        "save_cached_states": False,
+        "use_cached_states" : not args.use_new,
+        "save_cached_states": args.save_states,
         "deterministic"     : False,
 
         # Environment parameters
@@ -316,5 +321,7 @@ if __name__ == "__main__":
     #     for p in processes:
     #         p.join()
     #     # wandb.agent(sweep_id,function= lambda :main(default_config),count=args.num_sweeps)
+
+    cv2.destroyAllWindows()
 
 

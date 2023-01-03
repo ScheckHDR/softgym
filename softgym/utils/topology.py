@@ -13,10 +13,10 @@ class InvalidGeometry(Exception):
 
 
 ########## Topological Representation
-class Segment:
+class _Segment:
     def __init__(self,segment_num:int,starts_over:bool,ends_over:bool):
-        self.end_crossing:Union[None,"Crossing"] = None
-        self.start_crossing:Union[None,"Crossing"] = None
+        self.end_crossing:Union[None,"_Crossing"] = None
+        self.start_crossing:Union[None,"_Crossing"] = None
         self.segment_num:int = segment_num
         self.starts_over:bool = starts_over
         self.ends_over:bool = ends_over
@@ -29,7 +29,7 @@ class Segment:
         else:
             self.start_crossing = crossing
 
-    def get_other_crossing(self,crossing:"Crossing") -> "Crossing":
+    def get_other_crossing(self,crossing:"_Crossing") -> "_Crossing":
         if self.start_crossing == crossing:
             return self.end_crossing
         elif self.end_crossing == crossing:
@@ -117,21 +117,21 @@ class Segment:
                     next_leg_direction = np.round(np.arctan2(self.path[idx+1,1]-self.path[idx,1],self.path[idx+1,0]-self.path[idx,0]),3)
                     self.path[prev_corner_idx:idx+1,:] = step(self.path[prev_corner_idx:idx+1,:],-0.5,direction)
                     if collides(self.path[prev_corner_idx:idx+1,:],occupancy) or (prev_leg_direction != next_leg_direction and collides(self.path[prev_corner_idx:idx+1,:],self.path[:prev_corner_idx:,:])):
-                        # Can't pull leg back, so push it forward instead.
+                        # Can"t pull leg back, so push it forward instead.
                         self.path[prev_corner_idx:idx+1,:] = step(self.path[prev_corner_idx:idx+1,:],1,direction)
                     idx = 0 # Retrace the path again. Simplest way to account for certain changes.
-                    self.path = Segment._repair_path(self.path)
+                    self.path = _Segment._repair_path(self.path)
                 direction = np.arctan2(self.path[idx,1]-self.path[idx-1,1],self.path[idx,0]-self.path[idx-1,0])
                 prev_corner_idx = idx
             idx += 1
         
-        # handle last leg seperately since we can't do the corner test
+        # handle last leg seperately since we can"t do the corner test
         if idx > 1 and np.any(np.abs(self.path[-2,:] % 1) > 1e-6 ):
             self.path = np.vstack([self.path,self.path[-1,:]])
             self.path[prev_corner_idx:-1,:] = step(self.path[prev_corner_idx:-1,:],-0.5,direction)
             if collides(self.path[prev_corner_idx:-1,:],occupancy) or collides(self.path[prev_corner_idx:-1,:],self.path[:prev_corner_idx:-1,:]):
                 self.path[prev_corner_idx:-1,:] = step(self.path[prev_corner_idx:-1,:],1,direction)
-            self.path = Segment._repair_path(self.path)
+            self.path = _Segment._repair_path(self.path)
 
         self.path = self.path[1:,:]
 
@@ -179,7 +179,7 @@ class Segment:
                 if prev_corner_idx != 0 and collides(self.path[prev_corner_idx:idx+1,:],occupancy):
                     direction = get_shift_direction(occupancy,self.path[prev_corner_idx:idx+1,:])
                     self.path[prev_corner_idx:idx+1,:] = step(self.path[prev_corner_idx:idx+1,:],0.5,direction)
-                    self.path = Segment._repair_path(self.path)
+                    self.path = _Segment._repair_path(self.path)
                     idx = 0 # Retrace the path again. Simplest way to account for certain changes.
                 prev_corner_idx = idx
             idx += 1
@@ -234,7 +234,7 @@ class Segment:
 
                 path_len = self.path.shape[0]
                 self.path[a:b+1,:] = step(self.path[a:b+1,:],0.5,direction)
-                self.path = Segment._repair_path(self.path)
+                self.path = _Segment._repair_path(self.path)
                 if self.path.shape[0] > path_len:
                     if leg_num == 0:
                         b += 1
@@ -248,7 +248,7 @@ class Segment:
                         b -= 1
                         a += 1
                 self.path[a:b+1,:] = step(self.path[a:b+1,:],0.5,direction)
-                self.path = Segment._repair_path(self.path)
+                self.path = _Segment._repair_path(self.path)
                 return
 
             if leg_num == -1:
@@ -258,7 +258,7 @@ class Segment:
 
     def split(self,over_in:bool,over_out:bool): #TODO
         path = self.full_path
-        legs = Segment.split_path_into_legs(path)
+        legs = _Segment.split_path_into_legs(path)
 
         if len(legs) == 1:
             test_pos = np.round(path[path.shape[0]//2,:],1)
@@ -313,7 +313,7 @@ class Segment:
     def full_path(self):
         return np.vstack([self.start_crossing.position,self.path,self.end_crossing.position])
 
-class Crossing:
+class _Crossing:
     def __init__(self,numbers=np.array([-1,-1]),sign=1,is_start:bool = False):
         
         self._numbers = numbers
@@ -330,9 +330,9 @@ class Crossing:
         self._rotation:float = 0
         self._position:Union[None,np.ndarray] = None
 
-    def attach_segment(self,segment:Segment,over:bool,incoming:bool) -> None:
+    def attach_segment(self,segment:_Segment,over:bool,incoming:bool) -> None:
         
-        if not hasattr(self,'over_in_attach'):
+        if not hasattr(self,"over_in_attach"):
 
             if over:
                 self.over_in_attach = np.array([-0.5,0])
@@ -369,7 +369,7 @@ class Crossing:
             else:
                 self.under_out = segment
 
-    def get_next_segment(self,segment:Segment) -> Segment:
+    def get_next_segment(self,segment:_Segment) -> _Segment:
         if self.under_in == segment:
             return self.under_out
         elif self.over_in == segment:
@@ -377,7 +377,7 @@ class Crossing:
         else:
             raise Exception
 
-    def get_previous_segment(self,segment:Segment) -> Segment:
+    def get_previous_segment(self,segment:_Segment) -> _Segment:
         if self.under_out == segment:
             return self.under_in
         elif self.over_out == segment:
@@ -385,7 +385,7 @@ class Crossing:
         else:
             raise Exception
 
-    def get_connected_segment(self,segment:Segment,is_input:bool) -> Segment:
+    def get_connected_segment(self,segment:_Segment,is_input:bool) -> _Segment:
         if is_input:
             if self.under_in == segment:
                 return self.under_out
@@ -399,7 +399,7 @@ class Crossing:
         
         raise Exception
 
-    def get_side_segment(self,segment:Segment,left:bool,segment_is_input:bool) -> Union[Segment, None]:
+    def get_side_segment(self,segment:_Segment,left:bool,segment_is_input:bool) -> Union[_Segment, None]:
         # returns segment, and if the segment is an output
         s = self.sign > 0
 
@@ -476,7 +476,7 @@ class Crossing:
     def __eq__(self,other):
         if isinstance(other,int) or isinstance(other,float) or isinstance(other,np.int32) or isinstance(other,np.int64):
             return np.any(self._numbers == other)
-        elif isinstance(other,Crossing):
+        elif isinstance(other,_Crossing):
             return np.all(self._numbers == other._numbers)
         
         raise ValueError(f"Cannot compare crossing to type {type(other)}.")
@@ -499,26 +499,29 @@ class RopeTopology:
     CHIRALITY = 3
     ############## Topology_constructors
     def __init__(self,topo_np:np.ndarray,geometry_used:Union[np.ndarray,None]=None,segment_limits=None,check_level:int=2):
+        if topo_np.size > 0:
+            topo_np[:2,:] -= topo_np[0,0] # Ensures the segment numbering starts at zero.
+        
         if check_level > 0 and not RopeTopology.quick_check(topo_np):
             raise InvalidTopology("Representation failed initial check.")
         self._topology:np.ndarray = topo_np
 
-        self.segments:list[Segment] = []
-        self.crossings:list[Crossing] = [Crossing(is_start=True)] 
+        self.segments:list[_Segment] = []
+        self.crossings:list[_Crossing] = [_Crossing(is_start=True)] 
 
         prev_crossing = self.crossings[-1]
         prev_over = True #Assume rope went over initial "crossing"
 
-        col = -1 # Needed in case on trivial knot.
+        col = -1 # Needed in case of trivial knot.
         for col in range(topo_np.shape[1]):
-            new_segment = Segment(col,prev_over,topo_np[2,col] > 0)
+            new_segment = _Segment(col,prev_over,topo_np[2,col] > 0)
             prev_crossing.attach_segment(new_segment,prev_over>0,False)
             new_segment.attach_crossing(prev_crossing,False)
             self.segments.append(new_segment)
             is_over = topo_np[2,col]>0
             if topo_np[0,col] < topo_np[1,col]:
                 # end crossing does not exist yet; create it.
-                self.crossings.append(Crossing(topo_np[:2,col],topo_np[3,col]))
+                self.crossings.append(_Crossing(topo_np[:2,col],topo_np[3,col]))
                 self.crossings[-1].attach_segment(new_segment,is_over,True)
                 new_segment.attach_crossing(self.crossings[-1],True)
                 prev_crossing = self.crossings[-1]
@@ -528,7 +531,7 @@ class RopeTopology:
                 c.attach_segment(new_segment,is_over,True)
                 new_segment.attach_crossing(c,True)
 
-                # would have created a new region, check that this doesn't invalidate anything.
+                # would have created a new region, check that this doesn"t invalidate anything.
                 if check_level >= 2:
                     for is_left in [True,False]:
                         test_crossing = c
@@ -573,9 +576,9 @@ class RopeTopology:
             prev_over = is_over
 
         # Final segment, also has a phony "crossing"
-        self.segments.append(Segment(col+1,prev_over,True))
+        self.segments.append(_Segment(col+1,prev_over,True))
         prev_crossing.attach_segment(self.segments[-1],prev_over,False)
-        self.crossings.append(Crossing())
+        self.crossings.append(_Crossing())
         self.crossings[-1].attach_segment(self.segments[-1],True,True)
         self.segments[-1].attach_crossing(prev_crossing,False)
         self.segments[-1].attach_crossing(self.crossings[-1],True)
@@ -588,7 +591,7 @@ class RopeTopology:
         self._segment_limits = segment_limits
 
     @staticmethod
-    def from_geometry(geoms:np.ndarray,plane_normal:np.ndarray=np.array([0,1,0]),check_level:int=2) -> "RopeTopology":
+    def from_geometry(geoms:np.ndarray,plane_normal:np.ndarray=np.array([0,1,0],ndmin=2).T,check_level:int=2) -> "RopeTopology":
         '''
         Creates a RopeTopology object from a geometric representation.
         '''
@@ -596,20 +599,36 @@ class RopeTopology:
         return RopeTopology(raw_rep,geometry_used=geoms,segment_limits=segment_limits,check_level=check_level)
     
     @staticmethod
-    def raw_from_geometry(geoms:np.ndarray,plane_normal:np.ndarray=np.array([0,1,0])) -> Union[np.ndarray,List[int]]:
+    def raw_from_geometry(geoms:np.ndarray,plane_normal:np.ndarray=np.array([0,1,0],ndmin=2).T,plane_origin=None) -> Union[np.ndarray,List[int]]:
         '''
         Creates the raw topological representation from a geometric representation.
         Also provides the limits of each segment
         '''
-        assert geoms.shape[1] == 3, f'geoms must be an Nx3 matrix, not {geoms.shape}.'
-        assert plane_normal.size == 3, f'the plane_normal vector must be 3 elements long, not {plane_normal.size}.'
+        assert len(plane_normal.shape) == 2 and plane_normal.shape[1] == 1, f"Normal vector must be a column vector of size 3x1, not {plane_normal.shape}"
+        if plane_origin is not None:
+            #TODO: add in plane_origin stuff.
+            raise NotImplementedError
+
+        if geoms.shape[0] == 3:
+            geoms = geoms.T
+        
+
+        # Ensure normal vector is unit length.
+        plane_normal = plane_normal/np.linalg.norm(plane_normal)
+
+        # Project points onto the projection plane.
+        e1 = np.cross(plane_normal.T,np.random.rand(*plane_normal.shape).T)
+        e2 = np.cross(e1,plane_normal.T)
+        projected_points = (np.vstack([e1,e2]) @ geoms.T).T
+        heights = np.sum(plane_normal.T*geoms,axis=1).flatten()
+
         
         # Find the intersections.
         intersections = []
-        for i in range(geoms.shape[0]):
-            for j in range(i+2, geoms.shape[0]-2):
-                if _intersect(geoms[i,:].flatten(),geoms[i+1,:].flatten(),geoms[j,:].flatten(),geoms[j+1,:].flatten()):
-                    if np.any(np.round(geoms[j:j+2,:] - geoms[i,1],5) == 0) or np.any(np.round(geoms[j:j+2,:] - geoms[i+1,1],5) == 0):
+        for i in range(projected_points.shape[0]):
+            for j in range(i+2, projected_points.shape[0]-2):
+                if _intersect(projected_points[i,:].flatten(),projected_points[i+1,:].flatten(),projected_points[j,:].flatten(),projected_points[j+1,:].flatten()):
+                    if np.any(np.round(heights[j:j+2] - heights[i],5) == 0) or np.any(np.round(heights[j:j+2] - heights[i+1],5) == 0):
                         raise InvalidGeometry(f"Rope phases through itself at indices {i} and {j}.")
                     intersections.append([i,j])
                     intersections.append([j,i])
@@ -619,8 +638,8 @@ class RopeTopology:
         for i in range(len(intersections)):
             matching_intersect = intersections.index(intersections[i][::-1])
 
-            seg_height = np.dot(plane_normal,geoms[intersections[i][0]+1,:])/np.linalg.norm(plane_normal)
-            corr_height = np.dot(plane_normal,geoms[intersections[i][1]+1,:])/np.linalg.norm(plane_normal)
+            seg_height = heights[intersections[i][0]+1]
+            corr_height = heights[intersections[i][1]+1]
             is_over = seg_height > corr_height
 
             under_vect = geoms[intersections[i][0]+1,:] - geoms[intersections[i][0],:]
@@ -630,7 +649,7 @@ class RopeTopology:
                 under_vect,over_vect = over_vect,under_vect
             
             cross_prod = np.cross(over_vect,under_vect)
-            chirality = np.dot(cross_prod,plane_normal) # Technically should be converting everything to unit vectors, but I think it should be fine since i just need +ve/-ve
+            chirality = np.dot(cross_prod,plane_normal) # Technically should be converting everything to unit vectors, but it should be fine since only +ve/-ve is needed.
 
             topo[:,i] = np.array([[
                 i,
@@ -642,7 +661,15 @@ class RopeTopology:
         limits = [0]
         for i in intersections:
             limits.append(i[0])
-        limits.append(geoms.shape[0])
+        limits.append(geoms.shape[0] - 1)
+        limits.sort()
+
+        # Some segments can be tiny and have a length of 0
+        limits = np.array(limits).astype(np.int32)
+        doubles = np.hstack([1,limits[:-1] - limits[1:]])
+        while np.any(doubles == 0):
+            limits[np.where(doubles == 0)[0]] += 1 
+            doubles = np.hstack([1,limits[:-1] - limits[1:]])
         return topo,limits
 
     @staticmethod
@@ -701,7 +728,7 @@ class RopeTopology:
                         a_indices.append(a)
                         b_indices.append(b)
             return a_indices,b_indices
-        def handle_crossing_movements(crossing:Crossing,direction,calling_seg=None):
+        def handle_crossing_movements(crossing:_Crossing,direction,calling_seg=None):
             crossing.move_relative(step(np.array([0,0]),1,direction))
             for attached_seg in crossing.attached_segments:
                 if attached_seg != calling_seg:
@@ -716,10 +743,10 @@ class RopeTopology:
                         if np.any(attached_seg.path[0,:] != attached_seg.get_attachment_point(False)) and not direction == np.arctan2(crossing.position[0,1] - opp_crossing.position[0,1],crossing.position[0,0] - opp_crossing.position[0,0]):
                             handle_crossing_movements(opp_crossing,direction,attached_seg)
         def handle_collisions(current_seg,segments):
-            legs_current = Segment.split_path_into_legs(current_seg.full_path[1:,:])
+            legs_current = _Segment.split_path_into_legs(current_seg.full_path[1:,:])
             for seg in segments:
                 if seg != current_seg and seg.path is not None and collides(current_seg.full_path[1:,:],seg.path):
-                    legs_seg = Segment.split_path_into_legs(seg.full_path[1:,:])
+                    legs_seg = _Segment.split_path_into_legs(seg.full_path[1:,:])
                     current_indices,seg_indices = get_colliding_leg_numbers(legs_current,legs_seg)
                     if 0 in seg_indices:
                         si = seg_indices.index(0)
@@ -777,7 +804,7 @@ class RopeTopology:
             segs_to_colour = [segs_to_colour]
         ax = ax or plt.gca()
         for segment in self.segments:
-            segment.plot(ax,'r-' if segment.segment_num in segs_to_colour else 'b-',*args,**kwargs)
+            segment.plot(ax,"r-" if segment.segment_num in segs_to_colour else "b-",*args,**kwargs)
 
     
     ############# Topological Manipulation.   
@@ -804,7 +831,7 @@ class RopeTopology:
         return RopeTopology(r1_rep[:,r1_rep[0,:].argsort()]),over_segs
     
     def add_C(self,action:"RopeTopologyAction") -> Tuple["RopeTopology",List[int]]:
-        assert action.over_seg in [0,self.size] or action.under_seg in [0,self.size], f'C moves require at least one of the affected indices to be the end of the rope.'         
+        assert action.over_seg in [0,self.size] or action.under_seg in [0,self.size], f"C moves require at least one of the affected indices to be the end of the rope."         
         assert action.under_seg is not None, f"Must have a segment to go over."
         assert action.over_seg != action.under_seg, f"This is an R1 move."
         
@@ -835,7 +862,7 @@ class RopeTopology:
         return RopeTopology(r2_rep), over_segs
     
     def remove_C(self,action:"RopeTopologyAction") -> Tuple["RopeTopology",List[int]]:
-        assert action.over_seg in [0,self.size], f'segment_num must relate to the ends of the rope'
+        assert action.over_seg in [0,self.size], f"segment_num must relate to the ends of the rope"
 
         T = deepcopy(self.rep)
         if action.over_seg == 0:
@@ -918,11 +945,11 @@ class RopeTopology:
                 return False
         return True
     
-    def get_loop(self,segment_num:int,on_left:bool) -> List[Segment]:
+    def get_loop(self,segment_num:int,on_left:bool) -> List[_Segment]:
         '''
         Finds the segments that create a closed region of space. Desired region indicated by starting at the segment [segment_num] and which side of the segment the region is on.
         '''
-        assert 0 <= segment_num <= self.size, f'Segment number {segment_num} is out of range.'
+        assert 0 <= segment_num <= self.size, f"Segment number {segment_num} is out of range."
 
         if self.size == 0:
             return []
@@ -963,7 +990,7 @@ class RopeTopology:
         if self.size == 0:
             return [i for i in range(self.geometry.shape[0])]
         elif self._segment_limits is not None:
-            return [i for i in range(self._segment_limits[segment_number],self._segment_limits[segment_number]+1)]
+            return [i for i in range(self._segment_limits[segment_number],self._segment_limits[segment_number+1]+1)]
         else:
             raise Exception
             
@@ -975,6 +1002,19 @@ class RopeTopology:
             
     def astype(self,new_type) -> None:
         self._topology = self._topology.astype(new_type)
+
+    def get_valid_add_R1(self):
+        valid = []
+        for seg in range(self.size+1):
+            for chirality in [-1,1]:
+                for starts_over in [True,False]:
+                    action = RopeTopologyAction("+R1",seg,chirality,starts_over=starts_over)
+                    try:
+                        self.add_R1(action) # Throws error if action is not valid.
+                        valid.append(action)
+                    except InvalidTopology:
+                        pass
+        return valid
 
 
     @property
@@ -1068,7 +1108,7 @@ class RopeTopologyAction:
         elif self.type == "-C":
             return np.array([self.over_seg])
         elif self.type == "+R1":
-            return np.array([self.over_seg,self.chirality,self.starts_over])
+            return np.array([self.over_seg,self.chirality,self.starts_over*2 - 1])
         else:
             raise NotImplementedError
         
@@ -1298,6 +1338,8 @@ def topo_to_geometry_add_R1(topo:RopeTopology,action:RopeTopologyAction) -> Tupl
     assert action.starts_over is not None, f"R1 moves need an additional parameter for whether to start under or over."
 
     segment_idxs = topo.find_geometry_indices_matching_seg(action.over_seg)
+    if segment_idxs == []:
+        segment_idxs = topo.find_geometry_indices_matching_seg(action.over_seg)
     if len(segment_idxs) == 1:
         segment_idxs.append(segment_idxs[0])
     l = len(segment_idxs)
@@ -1318,7 +1360,7 @@ def topo_to_geometry_add_R1(topo:RopeTopology,action:RopeTopologyAction) -> Tupl
 ######################## Helper functions
 def _ccw(A,B,C):
     # return (C.y-A.y) * (B.x-A.x) > (B.y-A.y) * (C.x-A.x)
-    return (C[2]-A[2]) * (B[0]-A[0]) > (B[2]-A[2]) * (C[0]-A[0])
+    return (C[1]-A[1]) * (B[0]-A[0]) > (B[1]-A[1]) * (C[0]-A[0])
 
 def _intersect(A,B,C,D):
     # Return true if line segments AB and CD intersect
@@ -1355,7 +1397,7 @@ def get_arc(start,end,sign:bool,num_points:int):
 
 
 
-if __name__ == '__main__':
+if __name__ == "__main__":
     s = COMMON_KNOTS["trivial_knot"]
     g = COMMON_KNOTS["trefoil_knot_O-"]
 

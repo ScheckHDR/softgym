@@ -1,5 +1,5 @@
 program: runTrain.py
-name: Online_test_sparse
+name: R1_actions_QT
 method: bayes
 metric:
   name: mean_reward
@@ -15,7 +15,40 @@ parameters:
     values : [0.9,0.95,0.99]
   n_steps :
     values : [5,10,15]
+# non-learning centric parameters
+  save_name:
+    value: test
+  save_name:
+    value: test
+  save_name:
+    value: test
+  save_name:
+    value: test
+  num_workers:
+    value: 1
+  num_variations:
+    value: 1
+  horizon:
+    value: 5
+  pickers:
+    value: 1
+  render_mode:
+    value: cloth
+  maximum_crossings:
+    value: 2
+  goal_crossings:
+    value: 1
+  total_steps:
+    value: 5000
 early_terminate:
   type      : hyperband
-  min_iter  : 10
+  min_iter  : 500
   eta       : 2
+command:
+  - ${env}
+  - python
+  - ${program}
+  - ${args}
+  - -headless
+  - -use_new
+  # - -save_states

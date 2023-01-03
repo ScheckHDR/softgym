@@ -1,4 +1,5 @@
 import numpy as np
+import os
 from typing import Any, Dict, List, Optional, Tuple, Type, Union
 
 import torch
@@ -11,6 +12,7 @@ from stable_baselines3.common.noise import ActionNoise, VectorizedActionNoise
 from stable_baselines3.common.type_aliases import RolloutReturn,  TrainFreq, TrainFrequencyUnit
 from stable_baselines3.common.utils import should_collect_more_steps
 from stable_baselines3.common.vec_env import VecEnv
+from stable_baselines3.common.policies import ContinuousCritic
 from torch.distributions.normal import Normal
 
 
@@ -21,108 +23,6 @@ class TopologyMix(SAC):
     def __init__(self,*args,**kwargs):
         super().__init__(*args,**kwargs)
 
-    def collect_rollouts(
-        self,
-        env: VecEnv,
-        callback: BaseCallback,
-        train_freq: TrainFreq,
-        replay_buffer: ReplayBuffer,
-        action_noise: Optional[ActionNoise] = None,
-        learning_starts: int = 0,
-        log_interval: Optional[int] = None,
-    ) -> RolloutReturn:
-        """
-        Collect experiences and store them into a ``ReplayBuffer``.
-
-        :param env: The training environment
-        :param callback: Callback that will be called at each step
-            (and at the beginning and end of the rollout)
-        :param train_freq: How much experience to collect
-            by doing rollouts of current policy.
-            Either ``TrainFreq(<n>, TrainFrequencyUnit.STEP)``
-            or ``TrainFreq(<n>, TrainFrequencyUnit.EPISODE)``
-            with ``<n>`` being an integer greater than 0.
-        :param action_noise: Action noise that will be used for exploration
-            Required for deterministic policy (e.g. TD3). This can also be used
-            in addition to the stochastic policy for SAC.
-        :param learning_starts: Number of steps before learning for the warm-up phase.
-        :param replay_buffer:
-        :param log_interval: Log data every ``log_interval`` episodes
-        :return:
-        """
-        # Switch to eval mode (this affects batch norm / dropout)
-        self.policy.set_training_mode(False)
-
-        num_collected_steps, num_collected_episodes = 0, 0
-
-        assert isinstance(env, VecEnv), "You must pass a VecEnv"
-        assert train_freq.frequency > 0, "Should at least collect one step or episode."
-
-        if env.num_envs > 1:
-            assert train_freq.unit == TrainFrequencyUnit.STEP, "You must use only one env when doing episodic training."
-
-        # Vectorize action noise if needed
-        if action_noise is not None and env.num_envs > 1 and not isinstance(action_noise, VectorizedActionNoise):
-            action_noise = VectorizedActionNoise(action_noise, env.num_envs)
-
-        if self.use_sde:
-            self.actor.reset_noise(env.num_envs)
-
-        callback.on_rollout_start()
-        continue_training = True
-
-        while should_collect_more_steps(train_freq, num_collected_steps, num_collected_episodes):
-            if self.use_sde and self.sde_sample_freq > 0 and num_collected_steps % self.sde_sample_freq == 0:
-                # Sample a new noise matrix
-                self.actor.reset_noise(env.num_envs)
-
-            # Select action randomly or according to policy
-            actions, buffer_actions = self._sample_action(learning_starts, action_noise, env.num_envs)
-
-            # Rescale and perform action
-            new_obs, rewards, dones, infos = env.step(actions)
-
-            self.num_timesteps += env.num_envs
-            num_collected_steps += 1
-
-            # Give access to local variables
-            callback.update_locals(locals())
-            # Only stop training if return value is False, not when it is None.
-            if callback.on_step() is False:
-                return RolloutReturn(num_collected_steps * env.num_envs, num_collected_episodes, continue_training=False)
-
-            # Retrieve reward and episode length if using Monitor wrapper
-            self._update_info_buffer(infos, dones)
-
-            # Store data in replay buffer (normalized action and unnormalized observation)
-            self._store_transition(replay_buffer, buffer_actions, new_obs, rewards, dones, infos)
-
-            self._update_current_progress_remaining(self.num_timesteps, self._total_timesteps)
-
-            # For DQN, check if the target network should be updated
-            # and update the exploration schedule
-            # For SAC/TD3, the update is dones as the same time as the gradient update
-            # see https://github.com/hill-a/stable-baselines/issues/900
-            self._on_step()
-
-            for idx, done in enumerate(dones):
-                if done:
-                    # Update stats
-                    num_collected_episodes += 1
-                    self._episode_num += 1
-
-                    if action_noise is not None:
-                        kwargs = dict(indices=[idx]) if env.num_envs > 1 else {}
-                        action_noise.reset(**kwargs)
-
-                    # Log training infos
-                    if log_interval is not None and self._episode_num % log_interval == 0:
-                        self._dump_logs()
-
-        callback.on_rollout_end()
-
-        return RolloutReturn(num_collected_steps * env.num_envs, num_collected_episodes, continue_training)
-
     def predict(
         self,
         observation: np.ndarray,
@@ -132,35 +32,40 @@ class TopologyMix(SAC):
     ) -> Tuple[np.ndarray, Optional[Tuple[np.ndarray, ...]]]:
 
         goal = self.env.get_attr("goal")[0]
-        img=self.env.env_method("render_no_gripper")[0]
         topo_state = self.env.env_method("get_topological_representation")[0]
+        img=self.env.env_method("render_no_gripper")[0]
 
-        
+        obs = observation.flatten()
 
-        topo_plan = topology.find_topological_path(topo_state,goal,goal.size)
-        pick_idxs, pick_region,mid_region,place_region = topology.topo_to_geometry(topo_state,action=topo_plan[1].action)
+        topo_action = topology.RopeTopologyAction(
+            "+R1",
+            int(obs[-3]),
+            chirality=int(obs[-2]),
+            starts_over=obs[-1] > 0
+        )
 
-        pick_mu = pick_idxs[len(pick_idxs)//2] / 40
-        pick_std = (len(pick_idxs)//2) / 41
+        # topo_plan = topology.find_topological_path(topo_state,goal,goal.size)
+        pick_idxs, pick_region,mid_region,place_region = topology.topo_to_geometry(topo_state,action=topo_action)
 
-        pick_mid_abs = pick_region[pick_region.shape[0]//2,:]
-        mid_region_rel = mid_region - pick_mid_abs
-        place_region_rel = place_region - pick_mid_abs
+        pick_region = rescale(pick_region,np.array([-0.35,-0.35]),np.array([0.35,0.35]),-1,1)
+        mid_region = rescale(mid_region,np.array([-0.35,-0.35]),np.array([0.35,0.35]),-1,1)
+        place_region = rescale(place_region,np.array([-0.35,-0.35]),np.array([0.35,0.35]),-1,1)
 
-        mid_x_mu, mid_y_mu = np.mean(mid_region_rel,axis=0)
-        mid_x_std, mid_y_std = (np.max(mid_region,axis=0) - np.min(mid_region,axis=0)) / 2
+        prior_mus, prior_stds = prior_regions_to_normal_params(pick_idxs, pick_region,mid_region,place_region)
 
-        place_x_mu, place_y_mu = np.mean(place_region_rel,axis=0)
-        place_x_std, place_y_std = (np.max(place_region,axis=0) - np.min(place_region,axis=0)) / 2
+        policy_mus_full, policy_log_stds,_ = self.actor.get_action_dist_params(torch.tensor(observation).to("cuda"))
+        policy_stds_full = torch.exp(policy_log_stds)
 
-        prior_mus = torch.tensor(np.array([pick_mu,mid_x_mu,mid_y_mu,place_x_mu,place_y_mu])).to("cuda")
-        prior_stds = torch.tensor(np.array([pick_std,mid_x_std,mid_y_std,place_x_std,place_y_std])).to("cuda")
-        prior_stds = torch.max(prior_stds,torch.ones_like(prior_stds)*0.01)
-
-        policy_mus, policy_stds,_ = self.actor.get_action_dist_params(torch.tensor(observation).to("cuda"))
+        padding = super().predict(observation,state,episode_start,deterministic)[0].shape[1] - 5
+        policy_mus = torch.cat([policy_mus_full[0,:1],policy_mus_full[0,1+padding:]])
+        policy_stds = torch.cat([policy_stds_full[0,:1],policy_stds_full[0,1+padding:]])
 
         combined_mus = (prior_mus*policy_stds**2 + policy_mus*prior_stds**2)/(policy_stds**2 + prior_stds**2)
         combined_stds = torch.sqrt((policy_stds**2 * prior_stds**2)/(prior_stds**2 + policy_stds**2))
+
+        # Insert unbiased points
+        combined_mus = torch.cat([combined_mus[:1],policy_mus_full[0,1:1+padding],combined_mus[1:]])
+        combined_stds = torch.cat([combined_stds[:1],policy_stds_full[0,1:1+padding],combined_stds[1:]])
 
         combined_normal = Normal(combined_mus,combined_stds)
 
@@ -173,10 +78,20 @@ class TopologyMix(SAC):
             [-np.sin(theta),np.cos(theta),z],
             [0,0,1]
         ])
-        show_prior_on_image(img,pick_region,mid_region,place_region,lambda x: T_mat@x)
+        show_prior_on_image(
+            img,
+            rescale(pick_region,-1,1,-0.35,0.35),
+            rescale(mid_region,-1,1,-0.35,0.35),
+            rescale(place_region,-1,1,-0.35,0.35),
+            lambda x: T_mat@x
+        )
 
-        # test = super().predict(observation,state,episode_start,deterministic)
-        return combined_normal.rsample().detach().cpu().numpy(),None
+        # policy_prediction = super().predict(observation,state,episode_start,deterministic)[0]
+        # prior_prediction = Normal(prior_mus,prior_stds).sample().cpu().numpy()
+        combined_prediction = combined_normal.rsample().detach().cpu().numpy()
+
+        # topology.topo_to_geometry(topo_state,action=topo_action)
+        return combined_prediction,None
 
 
         
@@ -186,10 +101,109 @@ class TopologyMix(SAC):
     def _get_model_dist(self):
         return None
 
+class QT_OPT(SAC):
+    def __init__(
+        self,
+        # N:int=15,
+        # M:int=5,
+        # num_iter:int=1,
+        *args,
+        **kwargs
+    ):
+        N = 15
+        M = 5
+        num_iter = 2
+        assert 0 < M <= N, f"M must be a positive interger less than N."
+        assert num_iter > 0, f"num_iter must be a positive integer."
+
+        super().__init__(*args,**kwargs)
+
+        self.N = N
+        self.M = M
+        self.num_iter = num_iter
+
+    def predict(
+        self,
+        observation: np.ndarray,
+        state: Optional[Tuple[np.ndarray, ...]] = None,
+        episode_start: Optional[np.ndarray] = None,
+        deterministic: bool = False, 
+    ) -> Tuple[np.ndarray, Optional[Tuple[np.ndarray, ...]]]:
+
+        topo_state = self.env.env_method("get_topological_representation")[0]
+        # img=self.env.env_method("render_no_gripper")[0]
+
+        obs = observation.flatten()
+
+        topo_action = topology.RopeTopologyAction(
+            "+R1",
+            int(obs[-3]),
+            chirality=int(obs[-2]),
+            starts_over=obs[-1] > 0
+        )
+
+        # topo_plan = topology.find_topological_path(topo_state,goal,goal.size)
+        pick_idxs, pick_region,mid_region,place_region = topology.topo_to_geometry(topo_state,action=topo_action)
+
+        pick_region = rescale(pick_region,np.array([-0.35,-0.35]),np.array([0.35,0.35]),-1,1)
+        mid_region = rescale(mid_region,np.array([-0.35,-0.35]),np.array([0.35,0.35]),-1,1)
+        place_region = rescale(place_region,np.array([-0.35,-0.35]),np.array([0.35,0.35]),-1,1)
+
+        prior_mu, prior_std = prior_regions_to_normal_params(pick_idxs, pick_region,mid_region,place_region)
+        sampler = Normal(torch.tensor(prior_mu).to("cuda"),torch.tensor(prior_std).to("cuda"))
+
+        obs_N = torch.tensor(obs).repeat(self.N,1).to("cuda")
+        with torch.no_grad():
+            for _ in range(self.num_iter):
+                samples = sampler.sample_n(self.N)
+
+                # Q_values = self.score_func(samples)
+                Q_values = torch.max(*self.critic(obs_N.float(),samples.float()))
+
+                best = samples[torch.argsort(Q_values.flatten())][:self.M,:]
+
+                sampler = Normal(torch.mean(best,dim=0),torch.std(best,dim=0))
+
+            samples = sampler.sample_n(self.N)
+            # Q_values = self.score_func(samples)
+            Q_values = torch.max(*self.critic(obs_N.float(),samples.float()))
+            
+        return samples[torch.argsort(Q_values)][0].detach().cpu().numpy(), None
+
+    def score_func(self,actions):
+        return [self.env.env_method("simulate_action",a,True) for a in actions]
+
+
+
 
 
 
 ########################## Helper Functions
+def rescale(x:np.ndarray,old_min:np.ndarray,old_max:np.ndarray,new_min:np.ndarray,new_max:np.ndarray):
+    return (x - old_min) / (old_max-old_min) * (new_max-new_min) + new_min
+
+def prior_regions_to_normal_params(pick_idxs, pick_region,mid_region,place_region):
+    picks = np.array(pick_idxs)[[0,len(pick_idxs)//2]] / 40
+    picks = rescale(picks,0,1,-1,1)
+    pick_mu = picks[1]
+    pick_std = (picks[1]-picks[0])/2
+
+    pick_mid_abs = pick_region[pick_region.shape[0]//2,:]
+    mid_region_rel = mid_region - pick_mid_abs
+    place_region_rel = place_region - pick_mid_abs
+
+    mid_x_mu, mid_y_mu = np.mean(mid_region_rel,axis=0)
+    mid_x_std, mid_y_std = (np.max(mid_region,axis=0) - np.min(mid_region,axis=0)) / 2
+
+    place_x_mu, place_y_mu = np.mean(place_region_rel,axis=0)
+    place_x_std, place_y_std = (np.max(place_region,axis=0) - np.min(place_region,axis=0)) / 2
+
+    prior_mus = torch.tensor(np.array([pick_mu,mid_x_mu,mid_y_mu,place_x_mu,place_y_mu])).to("cuda")
+    prior_stds = torch.tensor(np.array([pick_std,mid_x_std,mid_y_std,place_x_std,place_y_std])).to("cuda")
+    prior_stds = torch.max(prior_stds,torch.ones_like(prior_stds)*0.01)
+
+    return prior_mus,prior_stds
+
 def show_prior_on_image(img:np.ndarray,pick_region:np.ndarray,mid_region:np.ndarray,place_region:np.ndarray,data_transform = lambda x: x):
     h = img.shape[0]
     w = img.shape[1]
@@ -257,5 +271,17 @@ def show_prior_on_image(img:np.ndarray,pick_region:np.ndarray,mid_region:np.ndar
     # img_final = cv2.bitwise_or(img_m,place_frame)
 
 
-    cv2.imshow("action_vis",img_final)
+    cv2.imshow(f"action_vis_{os.getpid()}",img_final)
     cv2.waitKey(1)
+
+def traj_crosses_rope(
+    traj:np.ndarray,
+    rope:np.ndarray,
+    plane_normal:np.ndarray=np.array([0,1,0],ndmin=2).T
+) -> bool:
+    assert traj.ndim == 2 and traj.shape[0] in [2,3], f"traj must be a matrix of size either Nx2 or Nx3."
+    assert rope.ndim == 2 and rope.shape[0] in [2,3], f"rope must be a matrix of size either Nx2 or Nx3."
+    assert not ((traj.shape[0] == 3 or rope.shape[0] == 3) and any(plane_normal.shape != [3,1])), f"normal vector must be shape 1x3."
+
+    return False
+

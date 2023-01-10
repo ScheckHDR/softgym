@@ -71,24 +71,27 @@ class TopologyMix(SAC):
 
 
 
-        # For visualising.
-        x,y,z,theta = self.env.env_method("get_rope_frame")[0]
-        T_mat = np.array([
-            [np.cos(theta),np.sin(theta),x],
-            [-np.sin(theta),np.cos(theta),z],
-            [0,0,1]
-        ])
-        show_prior_on_image(
-            img,
-            rescale(pick_region,-1,1,-0.35,0.35),
-            rescale(mid_region,-1,1,-0.35,0.35),
-            rescale(place_region,-1,1,-0.35,0.35),
-            lambda x: T_mat@x
-        )
+        # # For visualising.
+        # x,y,z,theta = self.env.env_method("get_rope_frame")[0]
+        # T_mat = np.array([
+        #     [np.cos(theta),np.sin(theta),x],
+        #     [-np.sin(theta),np.cos(theta),z],
+        #     [0,0,1]
+        # ])
+        # show_prior_on_image(
+        #     img,
+        #     rescale(pick_region,-1,1,-0.35,0.35),
+        #     rescale(mid_region,-1,1,-0.35,0.35),
+        #     rescale(place_region,-1,1,-0.35,0.35),
+        #     lambda x: T_mat@x
+        # )
 
         # policy_prediction = super().predict(observation,state,episode_start,deterministic)[0]
         # prior_prediction = Normal(prior_mus,prior_stds).sample().cpu().numpy()
-        combined_prediction = combined_normal.rsample().detach().cpu().numpy()
+        if deterministic:
+            combined_prediction = combined_normal.loc.detach().cpu().numpy()
+        else:
+            combined_prediction = combined_normal.rsample().detach().cpu().numpy()
 
         # topology.topo_to_geometry(topo_state,action=topo_action)
         return combined_prediction,None
@@ -278,10 +281,66 @@ def traj_crosses_rope(
     traj:np.ndarray,
     rope:np.ndarray,
     plane_normal:np.ndarray=np.array([0,1,0],ndmin=2).T
-) -> bool:
+) -> Union[np.ndarray,None]:
     assert traj.ndim == 2 and traj.shape[0] in [2,3], f"traj must be a matrix of size either Nx2 or Nx3."
     assert rope.ndim == 2 and rope.shape[0] in [2,3], f"rope must be a matrix of size either Nx2 or Nx3."
     assert not ((traj.shape[0] == 3 or rope.shape[0] == 3) and any(plane_normal.shape != [3,1])), f"normal vector must be shape 1x3."
 
-    return False
+    # Ensure normal vector is unit length.
+    plane_normal = plane_normal/np.linalg.norm(plane_normal)
+
+    # Project points onto the projection plane.
+    e1 = np.cross(plane_normal.T,np.random.rand(*plane_normal.shape))
+    e2 = np.cross(e1,plane_normal.T)
+    if rope.ndim == 2:
+        projected_rope = rope
+    else:
+        projected_rope = (np.vstack([e1,e2]) @ rope).T
+    if traj.ndim == 2:
+        projected_traj = traj
+    else:
+        projected_traj = (np.vstack([e1,e2]) @ traj).T
+
+    for t in range(projected_traj.shape[0]-1):
+        for r in range(projected_rope.shape[0]-1):
+            if topology._intersect(projected_traj[:,t],projected_traj[:,t+1],projected_rope[:,r],projected_rope[:,r+1]):
+                return get_intersection_point(projected_traj[:,t],projected_traj[:,t+1],projected_rope[:,r],projected_rope[:,r+1])
+
+    return None
+
+def get_intersection_point(A,B,C,D) -> Union[np.ndarray,None]:
+    AB = B-A
+    CD = D-C
+
+    CA_diff = C-A
+    AB_cross_CD = np.cross(AB,CD)
+    
+    t = np.cross(CA_diff,CD)/AB_cross_CD
+
+    parallelity = np.cross(CA_diff,AB) # not exactly sure what this measures, guessing some form of parallelness based on the conditions later.
+    u = parallelity/AB_cross_CD
+
+    if abs(AB_cross_CD) < 1e-9 and abs(parallelity) < 1e-9:
+        #collinear, check if overlapping or not
+        AB_dot = np.dot(AB,AB)
+        t0 = np.dot(CA_diff,AB)/AB_dot
+        if 0 <= t0 <= 1:
+            return A + t0*AB
+        t1 = np.dot(CA_diff + CD,AB)/AB_dot
+        if 0 <= t1 <= 1:
+            return A + t1*AB
+        return None
+    elif abs(AB_cross_CD) < 1e-9 and abs(parallelity) > 1e-9:
+        #parallel, non-intersecting
+        return None
+    elif abs(AB_cross_CD) > 1e-9 and 0 <= t <= 1 and 0 <= u <= 1:
+        # intersect
+        return A + t*AB
+    else:
+        # no intersect
+        return None
+def get_fourth_region(pick_pos) -> np.ndarray:
+
+    pass
+
 

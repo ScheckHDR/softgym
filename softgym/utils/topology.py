@@ -1098,6 +1098,9 @@ class RopeTopologyAction:
         self.chirality = chirality
         self.starts_over = starts_over
 
+    def __eq__(self,other):
+        return all(self.as_array == other.as_array)
+
     @property
     def as_array(self) -> np.ndarray:
         '''
@@ -1353,7 +1356,7 @@ def topo_to_geometry_add_R1(topo:RopeTopology,action:RopeTopologyAction) -> Tupl
 
     pick_region = topo.geometry[pick_idxs,:][:,[0,2]]
     place_region = np.vstack([get_arc(diameter[0,[0,2]],diameter[-1,[0,2]],action.chirality > 0,100),diameter[::-1,[0,2]]])
-    mid_region = np.vstack([get_arc(diameter[0,[0,2]],diameter[-1,[0,2]],action.chirality < 0,100),diameter[::-1,[0,2]]])
+    mid_region =   np.vstack([get_arc(diameter[0,[0,2]],diameter[-1,[0,2]],action.chirality < 0,100),diameter[::-1,[0,2]]])
 
     return pick_idxs,pick_region,mid_region,place_region
 

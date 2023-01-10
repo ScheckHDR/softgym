@@ -1,8 +1,8 @@
 program: runTrain.py
-name: R1_actions_QT
+name: R1_mix_sole_action_25_state
 method: bayes
 metric:
-  name: mean_reward
+  name: val_reward
   goal: maximize
 parameters:
   learning_rate:
@@ -17,17 +17,11 @@ parameters:
     values : [5,10,15]
 # non-learning centric parameters
   save_name:
-    value: test
-  save_name:
-    value: test
-  save_name:
-    value: test
-  save_name:
-    value: test
+    value: sole_action
   num_workers:
     value: 1
   num_variations:
-    value: 1
+    value: 25
   horizon:
     value: 5
   pickers:
@@ -50,5 +44,5 @@ command:
   - ${program}
   - ${args}
   - -headless
-  - -use_new
+  # - -use_new
   # - -save_states

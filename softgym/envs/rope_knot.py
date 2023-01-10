@@ -86,13 +86,13 @@ class RopeKnotEnv(RopeNewEnv):
         if self.action_mode == 'picker_trajectory':
             self.action_tool = PickerTraj(self.num_picker, picker_radius=self.picker_radius, picker_threshold=0.005, 
                 particle_radius=0.025, picker_low=(-0.35, 0., -0.35), picker_high=(0.35, 0.3, 0.35))
-            self.get_cached_configs_and_states(cached_states_path, self.num_variations)
 
             self.action_space = Box(
                 -np.ones([1,7]*self.num_picker),
                 np.ones([1,7]*self.num_picker)
             )
 
+        self.get_cached_configs_and_states(cached_states_path, self.num_variations)
         points = 41
         # obs_dim = points*points + 2*points + 1
 
@@ -277,6 +277,11 @@ class RopeKnotEnv(RopeNewEnv):
             pyflex.set_positions(curr_pos.flatten())
         return reward
 
+    def get_desired_action(self,topo:topology.RopeTopology):
+        if not hasattr(self,"asdf"):
+            self.asdf = random.choice(topo.get_valid_add_R1())
+        return self.asdf
+
     def _get_obs(self):
         geoms = self.get_geoms(normalise=True)[1:,:]
         x,y,z,theta = self.get_rope_frame()
@@ -289,10 +294,15 @@ class RopeKnotEnv(RopeNewEnv):
             obs = np.array([x,y,z,theta])
         elif self.task == "KNOT_ACTION_+R1":
             topo = self.get_topological_representation()
-            action_params = random.choice(topo.get_valid_add_R1()).as_array
+            possible_actions = topo.get_valid_add_R1()
+            topo_action = self.get_desired_action(topo)
+            if topo_action in possible_actions:
+                action_params = topo_action.as_array
+            else:
+                action_params = random.choice(possible_actions).as_array
             obs = np.hstack([np.array([x,y,z,theta]),geoms.flatten(),action_params])
         else:
-            raise Exception(f"Unknown observation required. Observations must be any of {{KNOT,STRAIGHT,CORNER}}, not {self.task}")
+            raise NotImplementedError(f"Unknown observation required.")
         
         return np.expand_dims(obs,0)
     def get_obs(self):

@@ -1,6 +1,6 @@
 import argparse
 from copy import deepcopy
-from typing import Dict
+from typing import Dict, List
 import numpy as np
 import multiprocessing as mp
 
@@ -17,6 +17,7 @@ from CustAlgs.policy import CustPolicy
 from stable_baselines3.common.vec_env.subproc_vec_env import SubprocVecEnv
 from stable_baselines3.common.monitor import Monitor
 from stable_baselines3.common.logger import configure
+from stable_baselines3.common.evaluation import evaluate_policy
 
 from stable_baselines3.common.callbacks import BaseCallback, CallbackList
 
@@ -28,6 +29,8 @@ from wandb.integration.sb3 import WandbCallback
 
 import os
 import cv2
+
+import torch
 
 
 def const__schedule(init_val:float):
@@ -110,6 +113,110 @@ class CustomCallback(BaseCallback):
         pass
 
 
+class ValidationCallback(BaseCallback):
+    def __init__(self, validation_env_kwargs:Dict, n_eval_episodes:int=100, frequency:int=1, verbose=0):
+        super(ValidationCallback, self).__init__(verbose)
+        self.frequency = frequency
+        self.n_eval_episodes = n_eval_episodes
+        self.env_kwargs = validation_env_kwargs
+        # Those variables will be accessible in the callback
+        # (they are defined in the base class)
+        # The RL model
+        # self.model = None  # type: BaseRLModel
+        # An alias for self.model.get_env(), the environment used for training
+        # self.training_env = None  # type: Union[gym.Env, VecEnv, None]
+        # Number of time the callback was called
+        # self.n_calls = 0  # type: int
+        # self.num_timesteps = 0  # type: int
+        # local and global variables
+        # self.locals = None  # type: Dict[str, Any]
+        # self.globals = None  # type: Dict[str, Any]
+        # The logger object, used to report things in the terminal
+        # self.logger = None  # type: logger.Logger
+        # # Sometimes, for event callback, it is useful
+        # # to have access to the parent object
+        # self.parent = None  # type: Optional[BaseCallback]
+        init_funcs = [lambda *args,**kwargs: normalize(RopeKnotEnv(**self.env_kwargs))]*4
+        self.validation_envs = SubprocVecEnv(init_funcs)#normalize(RopeKnotEnv(**self.env_kwargs))
+        self.rollouts = 0
+
+
+    def _on_training_start(self) -> None:
+        """
+        This method is called before the first rollout starts.
+        """
+        pass
+
+    def _on_rollout_start(self) -> None:
+        """
+        A rollout is the collection of environment interaction
+        using the current policy.
+        This event is triggered before collecting new samples.
+        """
+        if self.rollouts % self.frequency == 0:
+            print("validating")
+            # init_functions = [
+            #     (lambda *args, **kwards: 
+            #         normalize(RopeKnotEnv(**self.env_kwargs[i]))
+            # ) for i in range(len(self.env_kwargs))]
+            
+            mean_reward, std_dev_reward = evaluate_policy(
+                self.model,
+                # SubprocVecEnv(init_functions,"spawn"),
+                self.validation_envs,
+                self.n_eval_episodes,
+            )
+            wandb.log({"val_reward":mean_reward,"step":self.n_calls})
+            # validation_envs.close()
+        self.rollouts += 1
+        
+
+
+    def _on_step(self) -> bool:
+        """
+        This method will be called by the model after each call to `env.step()`.
+
+        For child callback (of an `EventCallback`), this will be called
+        when the event is triggered.
+
+        :return: (bool) If the callback returns False, training is aborted early.
+        """
+        return True
+
+    def _on_rollout_end(self) -> None:
+        """
+        This event is triggered before updating the policy.
+        """        
+        if self.n_calls > 0:
+            wandb.log({
+                "mean_reward":  self.model.logger.name_to_value["rollout/ep_rew_mean"],
+                "step":self.n_calls
+                # "timesteps":    self.model.logger.name_to_value["time/total_timesteps"],
+                # "policy_loss":  self.model.logger.name_to_value["train/policy_loss"],
+                # "value_loss":   self.model.logger.name_to_value["train/value_loss"]
+            })
+
+
+    def _on_training_end(self) -> None:
+        """
+        This event is triggered before exiting the `learn()` method.
+        """
+        print("validating")
+        # init_functions = [
+        #     (lambda *args, **kwards: 
+        #         normalize(RopeKnotEnv(**self.env_kwargs[i]))
+        # ) for i in range(len(self.env_kwargs))]
+
+        mean_reward, std_dev_reward = evaluate_policy(
+            self.model,
+            # SubprocVecEnv(init_functions,"spawn"),
+            self.validation_envs,
+            self.n_eval_episodes,
+        )
+        wandb.log({"val_reward":mean_reward,"step":self.n_calls})
+        self.validation_envs.close()
+
+
 def main(default_config):
 
     run = wandb.init(
@@ -152,6 +259,9 @@ def main(default_config):
     try:
         
         envs = normalize(RopeKnotEnv(**env_kwargs))
+        validation_env_kwargs = deepcopy(env_kwargs)
+        validation_env_kwargs["num_variations"] = 1000
+        validation_env_kwargs["horizon"] = 2
         # model = SAC(
         model = TopologyMix(
         # model = QT_OPT(
@@ -173,7 +283,12 @@ def main(default_config):
                     verbose=2,
                     
                 ),
-                CustomCallback(verbose=2),
+                ValidationCallback(
+                    validation_env_kwargs,
+                    100,
+                    wandb.config.total_timesteps//10,
+                )
+                # CustomCallback(verbose=2),
             ])
         )
     except Exception as e:
@@ -186,7 +301,7 @@ def main(default_config):
     del model
     envs.close()
     run.finish()
-
+    
  
 
 

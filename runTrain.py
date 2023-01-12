@@ -260,7 +260,7 @@ def main(default_config):
         
         envs = normalize(RopeKnotEnv(**env_kwargs))
         validation_env_kwargs = deepcopy(env_kwargs)
-        validation_env_kwargs["num_variations"] = 1000
+        validation_env_kwargs["num_variations"] = 25
         validation_env_kwargs["horizon"] = 2
         # model = SAC(
         model = TopologyMix(
@@ -313,6 +313,7 @@ def get_args():
     
     parser.add_argument("-headless", action="store_true", help="Whether to run the environment with headless rendering")
     parser.add_argument("-use_new", action="store_true", help="Whether to use the saved configurations or generate completely new configurations.")
+    parser.add_argument("-force_trivial",action="store_true",help="If generating new states, force them to be the trivial knot.")
     parser.add_argument("-save_states", action="store_true", help="Whether to save the configurations used.")
     
     parser.add_argument("--save_name",type=str,default="./output/TEMP",help="The directory to place generated models.")
@@ -330,19 +331,15 @@ def get_args():
     parser.add_argument("--project_name",type=str,default="Topological_Biasing")
     parser.add_argument("--sweep_name",type=str,default="test")
 
-    parser.add_argument("--ent_coef")
-    parser.add_argument("--gamma")
-    parser.add_argument("--learning_rate")
-    parser.add_argument("--n_steps")
-
-    args = parser.parse_args()    
+    args,unknown = parser.parse_known_args()    
     args.render_mode = args.render_mode.lower()
 
     assert args.num_workers > 0, f"num_workers must be set to a positive integer. You entered {args.num_workers}."
     assert args.horizon > 0, f"Horizon length must be a positive integer. You entered {args.horizon}."
     assert args.pickers > 0, f"Number of pickers must be a positive integer. You entered {args.pickers}."
     assert args.render_mode in ("cloth","particle","both"), f"Render_mode must be from the set {{cloth, particle, both}}. You entered {args.render_mode}."
-
+    if not args.use_new and args.force_trivial:
+        print("\033[93mNewly generated states are forced to be trivial, but the use_new flag has not been set. Any states read from file are not guaranteed to be trivial.\033[0m")
     return args
 
 if __name__ == "__main__":
@@ -378,6 +375,7 @@ if __name__ == "__main__":
         "num_picker"        : 1,
         "goal_threshold"    : 0.4,
         # "trajectory_funcs"  : [box_trajectory],
+        "force_trivial"     : args.force_trivial,
 
         # Training hyperparameters
         "algorithm"         : "SAC",

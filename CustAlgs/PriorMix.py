@@ -15,8 +15,9 @@ from stable_baselines3.common.vec_env import VecEnv
 from stable_baselines3.common.policies import ContinuousCritic
 from torch.distributions.normal import Normal
 
-
+import wandb
 import softgym.utils.topology as topology
+from shapely.geometry import LineString, Polygon,MultiPolygon
 
 
 class TopologyMix(SAC):
@@ -71,20 +72,20 @@ class TopologyMix(SAC):
 
 
 
-        # # For visualising.
-        # x,y,z,theta = self.env.env_method("get_rope_frame")[0]
-        # T_mat = np.array([
-        #     [np.cos(theta),np.sin(theta),x],
-        #     [-np.sin(theta),np.cos(theta),z],
-        #     [0,0,1]
-        # ])
-        # show_prior_on_image(
-        #     img,
-        #     rescale(pick_region,-1,1,-0.35,0.35),
-        #     rescale(mid_region,-1,1,-0.35,0.35),
-        #     rescale(place_region,-1,1,-0.35,0.35),
-        #     lambda x: T_mat@x
-        # )
+        # For visualising.
+        x,y,z,theta = self.env.env_method("get_rope_frame")[0]
+        T_mat = np.array([
+            [np.cos(theta),np.sin(theta),x],
+            [-np.sin(theta),np.cos(theta),z],
+            [0,0,1]
+        ])
+        show_prior_on_image(
+            img,
+            rescale(pick_region,-1,1,-0.35,0.35),
+            rescale(mid_region,-1,1,-0.35,0.35),
+            rescale(place_region,-1,1,-0.35,0.35),
+            lambda x: T_mat@x
+        )
 
         # policy_prediction = super().predict(observation,state,episode_start,deterministic)[0]
         # prior_prediction = Normal(prior_mus,prior_stds).sample().cpu().numpy()
@@ -178,6 +179,189 @@ class QT_OPT(SAC):
 
 
 
+def shift_line(line:np.ndarray,amount:float) -> np.ndarray:
+    seg = LineString(line.tolist())
+    shifted = seg.buffer(amount,single_sided=True)
+    if type(shifted) == Polygon:
+        coords = shifted.exterior.coords
+    elif type(shifted) == MultiPolygon:
+        coords = []
+        for g in shifted.geoms:
+            coords.extend(g.exterior.coords)
+    else:
+        raise NotImplementedError
+    n_shifted = np.array(coords)
+    return n_shifted.T
+
+def get_distance_mask(rope_img,max_dist):
+
+    # Create homography
+    h = rope_img.shape[0]
+    w = rope_img.shape[1]
+    s = 0.35
+    homography,_ = cv2.findHomography(
+        np.array([
+            [-s, s, s,-s],
+            [-s,-s, s, s],
+            [ 1, 1, 1, 1],
+
+        ]).T,
+        np.array([
+            [0,w,w,0],
+            [0,0,h,h],
+            [1,1,1,1],
+        ]).T
+    )
+
+    pixel_dist = np.linalg.norm((homography @ np.array([max_dist,0,1]))-np.array([w/2,h/2,1]))
+
+    dist_img = cv2.distanceTransform(255-rope_img[:,:,0],cv2.DIST_L2,3)
+    mask = cv2.inRange(dist_img,0,pixel_dist)
+
+    return mask
+def watershed_regions(img,topo:topology.RopeTopology,topo_action:topology.RopeTopologyAction,rope_frame):
+    
+    # Create homography
+    h = img.shape[0]
+    w = img.shape[1]
+    s = 0.35
+    homography,_ = cv2.findHomography(
+        np.array([
+            [-s, s, s,-s],
+            [-s,-s, s, s],
+            [ 1, 1, 1, 1],
+
+        ]).T,
+        np.array([
+            [0,w,w,0],
+            [0,0,h,h],
+            [1,1,1,1],
+        ]).T
+    )
+
+    # Get raw position of rope.
+    x,y,z,theta = rope_frame
+    T_mat = np.array([
+        [np.cos(theta),np.sin(theta),x],
+        [-np.sin(theta),np.cos(theta),z],
+        [0,0,1]
+    ])
+    rope = topo.geometry[:,[0,2]].T
+    rope_h = np.vstack([rope,np.ones(rope.shape[1])])
+    rope_img_p = (homography @ T_mat @ rope_h)[:2,:]
+
+    # Find geometry of interest from the topological action
+    segment_idxs = topo.find_geometry_indices_matching_seg(topo_action.over_seg)
+    if len(segment_idxs) == 1:
+        segment_idxs.append(segment_idxs[0])
+    l = len(segment_idxs)
+    over_indices = segment_idxs[l//2:]
+    under_indices = segment_idxs[:l//2]
+    if not topo_action.starts_over:
+        over_indices,under_indices = under_indices,over_indices
+    
+    # Shift segments slightly so that they can be used as seeds for watershed algorithm.
+    pick_region = topo.geometry[over_indices,:][:,[0,2]].T
+    mid_1_seed = shift_line(topo.geometry[over_indices ,:][:,[0,2]],0.005*topo_action.chirality)
+    mid_2_seed = shift_line(topo.geometry[under_indices ,:][:,[0,2]],-0.005*topo_action.chirality)
+    place_seed = shift_line(topo.geometry[under_indices ,:][:,[0,2]],0.005*topo_action.chirality)
+    avoid_seed = shift_line(topo.geometry[over_indices ,:][:,[0,2]],-0.005*topo_action.chirality)
+
+    # Apply homography.
+    pick_h  = np.vstack([pick_region, np.ones(pick_region.shape[1] )])
+    mid_1_h = np.vstack([mid_1_seed,np.ones(mid_1_seed.shape[1])])
+    mid_2_h = np.vstack([mid_2_seed,np.ones(mid_2_seed.shape[1])])
+    place_h = np.vstack([place_seed,np.ones(place_seed.shape[1])])
+    avoid_h = np.vstack([avoid_seed,np.ones(avoid_seed.shape[1])])
+    rope_h  = np.vstack([rope, np.ones(rope.shape[1] )])
+    pick_img_p  = (homography @ T_mat @ pick_h )[:2,:]
+    mid_1_img_p = (homography @ T_mat @ mid_1_h)[:2,:]
+    mid_2_img_p = (homography @ T_mat @ mid_2_h)[:2,:]
+    place_img_p = (homography @ T_mat @ place_h)[:2,:]
+    avoid_img_p = (homography @ T_mat @ avoid_h)[:2,:]
+    rope_img_p  = (homography @ T_mat @ rope_h )[:2,:]
+
+    # Create distance mask to limit range of watershed.
+    rope_img = np.zeros_like(img)
+    rope_img = cv2.polylines(
+        rope_img,
+        [rope_img_p.T.astype(np.int32)],
+        isClosed=False,
+        thickness=1,
+        color=255
+    )
+    mask = get_distance_mask(rope_img,0.1)
+
+    # Draw the watershed seeds onto a blank image
+    markers = np.zeros((img.shape[0],img.shape[1]),dtype=np.int32)
+    markers = cv2.polylines(
+        markers,
+        [mid_1_img_p.T.astype(np.int32)],
+        isClosed=False,
+        thickness=1,
+        color=1
+    )
+    markers = cv2.polylines(
+        markers,
+        [mid_2_img_p.T.astype(np.int32)],
+        isClosed=False,
+        thickness=1,
+        color=2
+    )
+    markers = cv2.polylines(
+        markers,
+        [place_img_p.T.astype(np.int32)],
+        isClosed=False,
+        thickness=1,
+        color=3
+    )
+    markers = cv2.polylines(
+        markers,
+        [avoid_img_p.T.astype(np.int32)],
+        isClosed=False,
+        thickness=1,
+        color=4
+    )
+
+    # Watershed and distance masking
+    markers = cv2.watershed(rope_img,markers.astype(np.int32))
+    markers = cv2.bitwise_and(markers,markers,mask=mask)
+
+    # rope_img[markers == 1] = (104,43,159)
+    # rope_img[markers == 2] = (255,0,0)
+    # rope_img[markers == 3] = (0,0,255)
+    # rope_img[markers == 4] = (208,224,64)
+   
+    # rope_img = cv2.polylines(
+    #     rope_img,
+    #     [pick_img_p.T.astype(np.int32)],
+    #     isClosed=False,
+    #     thickness=3,
+    #     color = (0,255,0)
+    # )
+    def simple_blob_gaussian(img):
+        rows,cols = np.where(img)
+        coords_h = np.vstack([rows,cols,np.ones(len(rows))])
+        coords = (np.linalg.inv(homography) @ coords_h)[:2,:]
+        mu_x,mu_y = np.mean(coords,axis=1)
+        std_x,std_y = np.max(coords,axis=1)-np.min(coords,axis=1)
+        return mu_x,mu_y,std_x,std_y
+
+    picks = np.array(over_indices)[[0,len(over_indices)//2]] / 40
+    picks = rescale(picks,0,1,-1,1)
+    pick_mu = picks[1]
+    pick_std = (picks[1]-picks[0])
+    
+    mu,std = [pick_mu],[pick_std]
+    for region in range(1,4): # don't care about the 'avoid' area.
+        region_dist = simple_blob_gaussian(markers == region)
+        mu.extend(region_dist[:2])
+        std.extend(region_dist[2:])
+    
+    return markers, mu, std
+
+        
+
 
 
 
@@ -189,20 +373,20 @@ def prior_regions_to_normal_params(pick_idxs, pick_region,mid_region,place_regio
     picks = np.array(pick_idxs)[[0,len(pick_idxs)//2]] / 40
     picks = rescale(picks,0,1,-1,1)
     pick_mu = picks[1]
-    pick_std = (picks[1]-picks[0])/2
+    pick_std = (picks[1]-picks[0])
 
     pick_mid_abs = pick_region[pick_region.shape[0]//2,:]
     mid_region_rel = mid_region - pick_mid_abs
     place_region_rel = place_region - pick_mid_abs
 
     mid_x_mu, mid_y_mu = np.mean(mid_region_rel,axis=0)
-    mid_x_std, mid_y_std = (np.max(mid_region,axis=0) - np.min(mid_region,axis=0)) / 2
+    mid_x_std, mid_y_std = (np.max(mid_region,axis=0) - np.min(mid_region,axis=0))
 
     place_x_mu, place_y_mu = np.mean(place_region_rel,axis=0)
-    place_x_std, place_y_std = (np.max(place_region,axis=0) - np.min(place_region,axis=0)) / 2
+    place_x_std, place_y_std = (np.max(place_region,axis=0) - np.min(place_region,axis=0))
 
     prior_mus = torch.tensor(np.array([pick_mu,mid_x_mu,mid_y_mu,place_x_mu,place_y_mu])).to("cuda")
-    prior_stds = torch.tensor(np.array([pick_std,mid_x_std,mid_y_std,place_x_std,place_y_std])).to("cuda")
+    prior_stds = torch.tensor(np.array([pick_std,mid_x_std,mid_y_std,place_x_std,place_y_std])/wandb.config.prior_factor).to("cuda")
     prior_stds = torch.max(prior_stds,torch.ones_like(prior_stds)*0.01)
 
     return prior_mus,prior_stds

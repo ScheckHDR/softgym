@@ -80,7 +80,7 @@ class RopeKnotEnv(RopeNewEnv):
             raise NotImplementedError
 
         self.headless = kwargs['headless']
-
+        self.force_trivial = kwargs.get("force_trivial",False)
         self.goal_crossings = kwargs['goal_crossings']
 
         if self.action_mode == 'picker_trajectory':
@@ -161,7 +161,7 @@ class RopeKnotEnv(RopeNewEnv):
                     topo = self.get_topological_representation()
                 except topology.InvalidGeometry as e:
                     continue
-                if num_variations == 1 and topo != topology.COMMON_KNOTS["trivial_knot"]:
+                if self.force_trivial and topo != topology.COMMON_KNOTS["trivial_knot"]:
                     continue
                 break
 
@@ -278,9 +278,10 @@ class RopeKnotEnv(RopeNewEnv):
         return reward
 
     def get_desired_action(self,topo:topology.RopeTopology):
-        if not hasattr(self,"asdf"):
-            self.asdf = random.choice(topo.get_valid_add_R1())
-        return self.asdf
+        # if not hasattr(self,"asdf"):
+        #     self.asdf = random.choice(topo.get_valid_add_R1())
+        # return self.asdf
+        return topology.RopeTopologyAction("+R1",0,chirality=1,starts_over=True)
 
     def _get_obs(self):
         geoms = self.get_geoms(normalise=True)[1:,:]

@@ -7,8 +7,9 @@ import random
 sys.path.append("/home/jeffrey/Documents/GitHub/softgym")
 from softgym.envs.rope_knot import RopeKnotEnv
 import softgym.utils.topology as topology
+import softgym.utils.topology_regions as TR
 from shapely.geometry import LineString, Polygon,MultiPolygon
-
+from typing import List, Tuple
 # # watershed
 # img = np.zeros((250,250,3),dtype=np.uint8)
 # markers = np.zeros((250,250,1),dtype=np.int32)
@@ -107,10 +108,10 @@ def watershed_regions(img,topo:topology.RopeTopology,topo_action:topology.RopeTo
     
     # Shift segments slightly so that they can be used as seeds for watershed algorithm.
     pick_region = topo.geometry[over_indices,:][:,[0,2]].T
-    mid_1_seed = shift_line(topo.geometry[over_indices ,:][:,[0,2]],0.005*topo_action.chirality)
+    mid_1_seed = shift_line(topo.geometry[over_indices ,:][:,[0,2]] , 0.005*topo_action.chirality)
     mid_2_seed = shift_line(topo.geometry[under_indices ,:][:,[0,2]],-0.005*topo_action.chirality)
-    place_seed = shift_line(topo.geometry[under_indices ,:][:,[0,2]],0.005*topo_action.chirality)
-    avoid_seed = shift_line(topo.geometry[over_indices ,:][:,[0,2]],-0.005*topo_action.chirality)
+    place_seed = shift_line(topo.geometry[under_indices ,:][:,[0,2]], 0.005*topo_action.chirality)
+    avoid_seed = shift_line(topo.geometry[over_indices ,:][:,[0,2]] ,-0.005*topo_action.chirality)
 
     # Apply homography.
     pick_h  = np.vstack([pick_region, np.ones(pick_region.shape[1] )])
@@ -274,7 +275,17 @@ def draw_action(img,markers,action,rope_frame) -> None:
     )
     cv2.imshow("Action",img)
     cv2.waitKey(0)
+
+
+def regions_to_normal_params(regions) -> Tuple[List[float], List[float]]:
+    mu,std = [],[]
+    for region in regions:
+        mu_x,mu_y = np.mean(region,axis=0)
+        std_x,std_y = np.max(region,axis=0)-np.min(region,axis=0)
+        mu.extend([mu_x,mu_y])
+        std.extend([std_x,std_y])
     
+    return mu, std
 
 env_kwargs = {
     "observation_mode": "key_point",
@@ -295,6 +306,26 @@ env_kwargs = {
     "task": "KNOT_ACTION_+R1",
 }
 env = RopeKnotEnv(**env_kwargs)
+env.reset()
+img = env.render_no_gripper()
+# Create homography
+h = img.shape[0]
+w = img.shape[1]
+s = 0.35
+homography,_ = cv2.findHomography(
+    np.array([
+        [-s, s, s,-s],
+        [-s,-s, s, s],
+        [ 1, 1, 1, 1],
+
+    ]).T,
+    np.array([
+        [0,w,w,0],
+        [0,0,h,h],
+        [1,1,1,1],
+    ]).T
+)
+
 while True:
     env.reset()
     for _ in range(5):
@@ -302,7 +333,17 @@ while True:
         topo = env.get_topological_representation()
         topo_action = random.choice(topo.get_valid_add_R1())
         rope_frame = env.get_rope_frame()
-        regions, mu, std = watershed_regions(img,topo,topo_action,rope_frame)
+        # Get raw position of rope.
+        x,y,z,theta = rope_frame
+        T_mat = np.array([
+            [np.cos(theta),0,np.sin(theta),x],
+            [0,1,0,y],
+            [-np.sin(theta),0,np.cos(theta),z],
+            [0,0,0,1]
+        ])
+        topo._geometry = (T_mat @ np.vstack([topo.geometry.T,np.ones(topo.geometry.shape[0])]))[:-1,:].T
+        regions, markers = TR.watershed_regions(img,topo,topo_action,homography)
+        # regions, mu, std = watershed_regions(img,topo,topo_action,rope_frame)
         
         action = np.random.normal(mu,std)
 

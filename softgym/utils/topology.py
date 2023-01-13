@@ -1085,7 +1085,6 @@ def find_grid_path(start,end,occupancy) -> np.ndarray:
 
 
 ####### Topological Planning
-
 class RopeTopologyAction:
     def __init__(self,type:str,over_seg:int,chirality:Union[int,None]=None,under_seg:Union[int,None]=None,starts_over:Union[bool,None]=None):
         type.upper()
@@ -1140,7 +1139,6 @@ class RopeTopologyNode:
             t = self.parent
         return i
 
-    
 
 def find_topological_path(start:RopeTopology,end:RopeTopology,max_rep_size = np.inf) -> List[RopeTopologyNode]:
 

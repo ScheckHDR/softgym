@@ -27,7 +27,7 @@ parameters:
   num_variations:
     value: 1
   horizon:
-    value: 5
+    value: 1
   pickers:
     value: 1
   render_mode:

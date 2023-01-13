@@ -110,6 +110,7 @@ class RopeKnotEnv(RopeNewEnv):
 
         self.workspace =np.array([[-0.35,0.35],[-0.35,0.35]])
         self.goal = goal
+        self._validation_mode = False
               
     def _reset(self):
         
@@ -132,6 +133,8 @@ class RopeKnotEnv(RopeNewEnv):
         for _ in range(50):
             pyflex.step()
 
+        if self._validation_mode:
+            self.disturb_rope(random.choice(np.arange(0,40,dtype=int)),np.random.rand(3)*10e-3,steps=50)
         self.maybe_disturb_rope(steps=50)
             
 
@@ -180,9 +183,9 @@ class RopeKnotEnv(RopeNewEnv):
         elif "KNOT_ACTION" in self.task:
 
             if self.goal == self.get_topological_representation():
-                reward = 1
-            else:
                 reward = 0
+            else:
+                reward = -1
         else:
             raise NotImplementedError
         return reward
@@ -413,6 +416,10 @@ class RopeKnotEnv(RopeNewEnv):
             # Just in case there is an incredibly unlikely event of it settling just right that it phases into itself again.
             self.maybe_disturb_rope(ref_idx,steps)
         return modified
+
+    def validation(self,is_validating=True) -> None:
+        self._validation_mode = is_validating
+
 ######### Helper Functions
 
 

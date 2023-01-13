@@ -72,20 +72,20 @@ class TopologyMix(SAC):
 
 
 
-        # For visualising.
-        x,y,z,theta = self.env.env_method("get_rope_frame")[0]
-        T_mat = np.array([
-            [np.cos(theta),np.sin(theta),x],
-            [-np.sin(theta),np.cos(theta),z],
-            [0,0,1]
-        ])
-        show_prior_on_image(
-            img,
-            rescale(pick_region,-1,1,-0.35,0.35),
-            rescale(mid_region,-1,1,-0.35,0.35),
-            rescale(place_region,-1,1,-0.35,0.35),
-            lambda x: T_mat@x
-        )
+        # # For visualising.
+        # x,y,z,theta = self.env.env_method("get_rope_frame")[0]
+        # T_mat = np.array([
+        #     [np.cos(theta),np.sin(theta),x],
+        #     [-np.sin(theta),np.cos(theta),z],
+        #     [0,0,1]
+        # ])
+        # show_prior_on_image(
+        #     img,
+        #     rescale(pick_region,-1,1,-0.35,0.35),
+        #     rescale(mid_region,-1,1,-0.35,0.35),
+        #     rescale(place_region,-1,1,-0.35,0.35),
+        #     lambda x: T_mat@x
+        # )
 
         # policy_prediction = super().predict(observation,state,episode_start,deterministic)[0]
         # prior_prediction = Normal(prior_mus,prior_stds).sample().cpu().numpy()

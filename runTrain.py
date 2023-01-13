@@ -137,7 +137,7 @@ class ValidationCallback(BaseCallback):
         # # to have access to the parent object
         # self.parent = None  # type: Optional[BaseCallback]
         init_funcs = [lambda *args,**kwargs: normalize(RopeKnotEnv(**self.env_kwargs))]*4
-        self.validation_envs = SubprocVecEnv(init_funcs)#normalize(RopeKnotEnv(**self.env_kwargs))
+        # self.validation_envs = SubprocVecEnv(init_funcs)#normalize(RopeKnotEnv(**self.env_kwargs))
         self.rollouts = 0
 
 
@@ -153,6 +153,7 @@ class ValidationCallback(BaseCallback):
         using the current policy.
         This event is triggered before collecting new samples.
         """
+        self.training_env.env_method("validation",True)
         if self.rollouts % self.frequency == 0:
             print("validating")
             # init_functions = [
@@ -163,11 +164,13 @@ class ValidationCallback(BaseCallback):
             mean_reward, std_dev_reward = evaluate_policy(
                 self.model,
                 # SubprocVecEnv(init_functions,"spawn"),
-                self.validation_envs,
+                # self.validation_envs,
+                self.training_env,
                 self.n_eval_episodes,
             )
             wandb.log({"val_reward":mean_reward,"step":self.n_calls})
             # validation_envs.close()
+            self.training_env.env_method("validation",False)
         self.rollouts += 1
         
 
@@ -214,7 +217,7 @@ class ValidationCallback(BaseCallback):
             self.n_eval_episodes,
         )
         wandb.log({"val_reward":mean_reward,"step":self.n_calls})
-        self.validation_envs.close()
+        # self.validation_envs.close()
 
 
 def main(default_config):
@@ -286,7 +289,7 @@ def main(default_config):
                 ValidationCallback(
                     validation_env_kwargs,
                     100,
-                    wandb.config.total_timesteps//10,
+                    wandb.config.total_timesteps//100,
                 )
                 # CustomCallback(verbose=2),
             ])
@@ -383,6 +386,7 @@ if __name__ == "__main__":
         "ent_coef"          : 1e-2,
         "gamma"             : 0.9,
         "n_steps"           : 5,
+        "prior_factor"      : 0.5,
     }
 
     # sweep_params = {

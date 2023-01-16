@@ -1,5 +1,5 @@
 program: runTrain.py
-name: R1_MIX_uncertainty__sole_action_sole_state
+name: R1_MIX_FIX_sole_action_sole_state
 method: bayes
 metric:
   name: val_reward

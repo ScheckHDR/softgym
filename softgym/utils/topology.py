@@ -1017,6 +1017,7 @@ class RopeTopology:
         return valid
 
 
+
     @property
     def size(self):
         return deepcopy(self._topology.shape[1])
@@ -1345,11 +1346,11 @@ def topo_to_geometry_add_R1(topo:RopeTopology,action:RopeTopologyAction) -> Tupl
         segment_idxs.append(segment_idxs[0])
     l = len(segment_idxs)
     if action.starts_over:
-        under_indices = segment_idxs[:l//2]
-        pick_idxs = segment_idxs[l//2:]
-    else:
         under_indices = segment_idxs[l//2:]
         pick_idxs = segment_idxs[:l//2]
+    else:
+        under_indices = segment_idxs[:l//2]
+        pick_idxs = segment_idxs[l//2:]
     diameter = topo.geometry[under_indices,:]
 
     pick_region = topo.geometry[pick_idxs,:][:,[0,2]]
@@ -1366,6 +1367,21 @@ def _ccw(A,B,C):
 def _intersect(A,B,C,D):
     # Return true if line segments AB and CD intersect
     return _ccw(A,C,D) != _ccw(B,C,D) and _ccw(A,B,C) != _ccw(A,B,D)
+
+def _project_onto_plane(points:np.ndarray,plane_normal:np.ndarray=np.array([0,1,0],ndmin=2).T) -> Tuple[np.ndarray,np.ndarray]:
+    assert plane_normal.shape[1] == 1, f"Place normal must be an Nx1 vector"
+    assert points.shape[0] == plane_normal.shape[0], f"Dimension mismatch. Points are size {points.shape[0]} but normal vector is size {plane_normal.shape[0]} along dimension 0."
+    
+    # Ensure normal vector is unit length.
+    plane_normal = plane_normal/np.linalg.norm(plane_normal)
+
+    # Project points onto the projection plane.
+    e1 = np.cross(plane_normal.T,np.random.rand(*plane_normal.shape).T)
+    e2 = np.cross(e1,plane_normal.T)
+    projected_points = (np.vstack([e1,e2]) @ points)
+    heights = np.sum(plane_normal*points,axis=0).flatten()
+
+    return projected_points, heights
 
 def get_arc(start,end,sign:bool,num_points:int):
     # start and end are x,y pairs

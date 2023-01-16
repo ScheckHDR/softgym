@@ -213,7 +213,7 @@ class ValidationCallback(BaseCallback):
         mean_reward, std_dev_reward = evaluate_policy(
             self.model,
             # SubprocVecEnv(init_functions,"spawn"),
-            self.validation_envs,
+            self.training_env,
             self.n_eval_episodes,
         )
         wandb.log({"val_reward":mean_reward,"step":self.n_calls})

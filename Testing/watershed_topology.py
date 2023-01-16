@@ -7,7 +7,7 @@ import random
 sys.path.append("/home/jeffrey/Documents/GitHub/softgym")
 from softgym.envs.rope_knot import RopeKnotEnv
 import softgym.utils.topology as topology
-import softgym.utils.topology_regions as TR
+import Testing.topology_regions as TR
 from shapely.geometry import LineString, Polygon,MultiPolygon
 from typing import List, Tuple
 # # watershed
@@ -277,7 +277,7 @@ def draw_action(img,markers,action,rope_frame) -> None:
     cv2.waitKey(0)
 
 
-def regions_to_normal_params(regions) -> Tuple[List[float], List[float]]:
+def regions_to_normal_params(pick_indices,regions) -> Tuple[List[float], List[float]]:    
     mu,std = [],[]
     for region in regions:
         mu_x,mu_y = np.mean(region,axis=0)
@@ -292,18 +292,19 @@ env_kwargs = {
     "action_mode": "picker_trajectory",
     "num_picker": 1,
     "render": True,
-    "headless": True,
+    "headless": False,
     "horizon": 5,
     "action_repeat": 1,
     "render_mode": "cloth",
-    "num_variations": 500,
-    "use_cached_states": True,
+    "num_variations": 10,
+    "use_cached_states": False,
     "save_cached_states": False,
     "deterministic": False,
     "maximum_crossings": 5,
     "goal_crossings": 5,
     "goal": topology.COMMON_KNOTS["trefoil_knot_O-"],
     "task": "KNOT_ACTION_+R1",
+    "force_trivial": True,
 }
 env = RopeKnotEnv(**env_kwargs)
 env.reset()
@@ -328,10 +329,14 @@ homography,_ = cv2.findHomography(
 
 while True:
     env.reset()
-    for _ in range(5):
+    for _ in range(2):
         img = env.render_no_gripper()
         topo = env.get_topological_representation()
+        print(topo.rep)
         topo_action = random.choice(topo.get_valid_add_R1())
+        print(topo_action.as_array)
+        print(topo.take_action(topo_action)[0].rep)
+        print("-"*50)
         rope_frame = env.get_rope_frame()
         # Get raw position of rope.
         x,y,z,theta = rope_frame
@@ -341,12 +346,34 @@ while True:
             [-np.sin(theta),0,np.cos(theta),z],
             [0,0,0,1]
         ])
-        topo._geometry = (T_mat @ np.vstack([topo.geometry.T,np.ones(topo.geometry.shape[0])]))[:-1,:].T
-        regions, markers = TR.watershed_regions(img,topo,topo_action,homography)
-        # regions, mu, std = watershed_regions(img,topo,topo_action,rope_frame)
-        
-        action = np.random.normal(mu,std)
+        pick_indices, regions, markers = TR.watershed_regions(img,topo,topo_action,homography,T_mat)
 
-        draw_action(img,regions,mu,rope_frame)
+        regions = [TR.transform_points(region,np.linalg.inv(np.array([
+            [np.cos(theta),np.sin(theta),x],
+            [-np.sin(theta),np.cos(theta),z],
+            [0,0,1]
+        ]))) for region in regions]
+
+        mu,std = TR.regions_to_normal_params(topo.geometry.T,pick_indices,regions)
+        mu = np.array(mu[:-2])
+        std = np.array(std[:-2])
+        cv2.imshow("regions",TR.draw(
+            img,
+            markers,
+            topo.geometry.T[[0,2],:],
+            # np.linalg.inv(
+                np.array([
+                    [np.cos(theta),np.sin(theta),x],
+                    [-np.sin(theta),np.cos(theta),z],
+                    [0,0,1]
+                ])
+            # )
+            ,
+            mu
+        ))
+        # cv2.waitKey(0)
+        # action = env.action_space.sample()#np.random.normal(mu,std)
+
+        # draw_action(img,regions,mu,rope_frame)
         env.step(mu)
 

@@ -231,8 +231,11 @@ class RopeKnotEnv(RopeNewEnv):
             raise NotImplementedError(f"Cannot determine completion criteria for task {self.task}")
  
     def _step(self,action):
-        for a in action:
-            self.simulate_action(a)
+        if action.ndim == 2:
+            for a in action:
+                self.simulate_action(a)
+        else:
+            self.simulate_action(action)
     def simulate_action(self, action,reset:bool=False) -> float:
         curr_pos = pyflex.get_positions().reshape(-1, 4)
 

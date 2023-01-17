@@ -8,7 +8,7 @@ import gym
 from softgym.envs.rope_knot import RopeKnotEnv
 from softgym.utils.normalized_env import normalize
 import softgym.utils.topology as topology
-from CustAlgs.PriorMix import TopologyMix, QT_OPT
+from CustAlgs.PriorMix import TopologyMix, QT_OPT, WatershedMix
 
 
 from stable_baselines3 import A2C, SAC, PPO, DQN
@@ -266,7 +266,8 @@ def main(default_config):
         validation_env_kwargs["num_variations"] = 25
         validation_env_kwargs["horizon"] = 2
         # model = SAC(
-        model = TopologyMix(
+        # model = TopologyMix(
+        model = WatershedMix(
         # model = QT_OPT(
             wandb.config.policy_type,
             envs,
@@ -288,8 +289,8 @@ def main(default_config):
                 ),
                 ValidationCallback(
                     validation_env_kwargs,
-                    100,
-                    wandb.config.total_timesteps//100,
+                    5,
+                    wandb.config.total_timesteps//25,
                 )
                 # CustomCallback(verbose=2),
             ])

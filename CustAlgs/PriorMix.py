@@ -19,6 +19,9 @@ import wandb
 import softgym.utils.topology as topology
 from shapely.geometry import LineString, Polygon,MultiPolygon
 
+import softgym.utils.topology_regions as TR
+
+
 
 class TopologyMix(SAC):
     def __init__(self,*args,**kwargs):
@@ -177,7 +180,106 @@ class QT_OPT(SAC):
     def score_func(self,actions):
         return [self.env.env_method("simulate_action",a,True) for a in actions]
 
+class WatershedMix(SAC):
+    def __init__(self,*args,**kwargs):
+        super().__init__(*args,**kwargs)
 
+    def predict(
+        self,
+        observation: np.ndarray,
+        state: Optional[Tuple[np.ndarray, ...]] = None,
+        episode_start: Optional[np.ndarray] = None,
+        deterministic: bool = False,
+    ) -> Tuple[np.ndarray, Optional[Tuple[np.ndarray, ...]]]:
+
+        img=self.env.env_method("render_no_gripper")[0]
+        topo_state = self.env.env_method("get_topological_representation")[0]
+
+        obs = observation.flatten()
+        # topo_plan = topology.find_topological_path(topo_state,goal,goal.size)
+        topo_action = topology.RopeTopologyAction(
+            "+R1",
+            int(obs[-3]),
+            chirality=int(obs[-2]),
+            starts_over=obs[-1] > 0
+        )
+        rope_frame = self.env.env_method("get_rope_frame")[0]
+        x,y,z,theta = rope_frame
+        T_mat = np.array([
+            [np.cos(theta),0,np.sin(theta),x],
+            [0,1,0,y],
+            [-np.sin(theta),0,np.cos(theta),z],
+            [0,0,0,1]
+        ])
+        h = img.shape[0]
+        w = img.shape[1]
+        s = 0.35
+        homography,_ = cv2.findHomography(
+            np.array([
+                [-s, s, s,-s],
+                [-s,-s, s, s],
+                [ 1, 1, 1, 1],
+
+            ]).T,
+            np.array([
+                [0,w,w,0],
+                [0,0,h,h],
+                [1,1,1,1],
+            ]).T
+)
+        pick_indices, regions, markers = TR.watershed_regions(img,topo_state,topo_action,homography,T_mat)
+        regions = [TR.transform_points(region,np.linalg.inv(np.array([
+            [np.cos(theta),np.sin(theta),x],
+            [-np.sin(theta),np.cos(theta),z],
+            [0,0,1]
+        ]))) for region in regions]
+        mu,std = TR.regions_to_normal_params(topo_state.geometry.T,pick_indices,regions)
+        prior_mus = torch.tensor(mu[:-2]).to("cuda")
+        prior_stds = torch.tensor(std[:-2]).to("cuda") * wandb.config.prior_factor
+        prior_stds = torch.max(prior_stds,torch.ones_like(prior_stds)*0.01)
+
+        policy_mus, policy_log_stds,_ = self.actor.get_action_dist_params(torch.tensor(observation).to("cuda"))
+        policy_stds = torch.exp(policy_log_stds)
+
+        combined_mus = (prior_mus*policy_stds**2 + policy_mus*prior_stds**2)/(policy_stds**2 + prior_stds**2)
+        combined_stds = torch.sqrt((policy_stds**2 * prior_stds**2)/(prior_stds**2 + policy_stds**2))
+
+        combined_normal = Normal(combined_mus,combined_stds)
+
+
+        # policy_prediction = super().predict(observation,state,episode_start,deterministic)[0]
+        # prior_prediction = Normal(prior_mus,prior_stds).sample().cpu().numpy()
+        if deterministic:
+            combined_prediction = combined_normal.loc.detach().cpu().numpy()
+        else:
+            combined_prediction = combined_normal.rsample().detach().cpu().numpy()
+
+        # For visualising.
+        cv2.imshow(f"action_vis_{os.getpid()}_std_factor={wandb.config.prior_factor}",TR.draw(
+            img,
+            markers,
+            topo_state.geometry.T[[0,2],:],
+            # np.linalg.inv(
+                np.array([
+                    [np.cos(theta),np.sin(theta),x],
+                    [-np.sin(theta),np.cos(theta),z],
+                    [0,0,1]
+                ])
+            # )
+            ,
+            combined_prediction.flatten()
+        ))
+        cv2.waitKey(1)
+
+        return combined_prediction,None
+
+
+        
+
+
+
+    def _get_model_dist(self):
+        return None
 
 def shift_line(line:np.ndarray,amount:float) -> np.ndarray:
     seg = LineString(line.tolist())

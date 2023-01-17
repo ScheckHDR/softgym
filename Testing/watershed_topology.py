@@ -7,7 +7,7 @@ import random
 sys.path.append("/home/jeffrey/Documents/GitHub/softgym")
 from softgym.envs.rope_knot import RopeKnotEnv
 import softgym.utils.topology as topology
-import Testing.topology_regions as TR
+import softgym.utils.topology_regions as TR
 from shapely.geometry import LineString, Polygon,MultiPolygon
 from typing import List, Tuple
 # # watershed
@@ -292,12 +292,12 @@ env_kwargs = {
     "action_mode": "picker_trajectory",
     "num_picker": 1,
     "render": True,
-    "headless": False,
+    "headless": True,
     "horizon": 5,
     "action_repeat": 1,
     "render_mode": "cloth",
     "num_variations": 10,
-    "use_cached_states": False,
+    "use_cached_states": True,
     "save_cached_states": False,
     "deterministic": False,
     "maximum_crossings": 5,
@@ -332,11 +332,11 @@ while True:
     for _ in range(2):
         img = env.render_no_gripper()
         topo = env.get_topological_representation()
-        print(topo.rep)
+        # print(topo.rep)
         topo_action = random.choice(topo.get_valid_add_R1())
-        print(topo_action.as_array)
-        print(topo.take_action(topo_action)[0].rep)
-        print("-"*50)
+        # print(topo_action.as_array)
+        # print(topo.take_action(topo_action)[0].rep)
+        # print("-"*50)
         rope_frame = env.get_rope_frame()
         # Get raw position of rope.
         x,y,z,theta = rope_frame
@@ -371,7 +371,7 @@ while True:
             ,
             mu
         ))
-        # cv2.waitKey(0)
+        cv2.waitKey(0)
         # action = env.action_space.sample()#np.random.normal(mu,std)
 
         # draw_action(img,regions,mu,rope_frame)

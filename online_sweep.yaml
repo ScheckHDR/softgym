@@ -1,5 +1,5 @@
 program: runTrain.py
-name: R1_MIX_FIX_sole_action_sole_state
+name: R1_MIX_watershed_sole_action_sole_state
 method: bayes
 metric:
   name: val_reward
@@ -16,12 +16,11 @@ parameters:
   n_steps :
     values : [5,10,15]
   prior_factor:
-    value : 1
-    # min : 0
-    # max : 3
+    min : 0.0
+    max : 1.0
 # non-learning centric parameters
   save_name:
-    value: sole_action
+    value: sole_action_watershed
   num_workers:
     value: 1
   num_variations:

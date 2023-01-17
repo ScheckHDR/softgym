@@ -68,10 +68,15 @@ def watershed_regions(
 
     # Shift segments slightly so that they can be used as seeds in the watershed algorithm.
     pick_region = over_geometry
-    mid_1_seed = shift_line(over_geometry.T,5e-3*topo_action.chirality)
-    mid_2_seed = shift_line(under_geometry.T,5e-3*topo_action.chirality)
-    place_seed = shift_line(under_geometry.T,-5e-3*topo_action.chirality)
-    avoid_seed = shift_line(over_geometry.T,-5e-3*topo_action.chirality)
+    try:
+        mid_1_seed = shift_line(over_geometry.T,5e-3*topo_action.chirality)
+        mid_2_seed = shift_line(under_geometry.T,5e-3*topo_action.chirality)
+        place_seed = shift_line(under_geometry.T,-5e-3*topo_action.chirality)
+        avoid_seed = shift_line(over_geometry.T,-5e-3*topo_action.chirality)
+    except:
+        print(over_geometry.T)
+        print('\n')
+        print(under_geometry.T)
 
     # Apply homography.
     pick_pixels  = (homography @ np.vstack([pick_region,np.ones(pick_region.shape[1])]))[:-1,:]
@@ -101,6 +106,13 @@ def watershed_regions(
             isClosed=False,
             thickness=1,
             color=seed_num
+        )
+    markers = cv2.polylines(
+            markers,
+            [rope_pixels.T.astype(np.int32)],
+            isClosed=False,
+            thickness=1,
+            color=-1
         )
     
     # Watershed and distance masking.

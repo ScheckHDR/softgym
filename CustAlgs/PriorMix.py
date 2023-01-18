@@ -234,8 +234,8 @@ class WatershedMix(SAC):
             [0,0,1]
         ]))) for region in regions]
         mu,std = TR.regions_to_normal_params(topo_state.geometry.T,pick_indices,regions)
-        prior_mus = torch.tensor(mu[:-2]).to("cuda")
-        prior_stds = torch.tensor(std[:-2]).to("cuda") * wandb.config.prior_factor
+        prior_mus = torch.tensor(mu).to("cuda")
+        prior_stds = torch.tensor(std).to("cuda") * wandb.config.prior_factor
         prior_stds = torch.max(prior_stds,torch.ones_like(prior_stds)*0.01)
 
         policy_mus, policy_log_stds,_ = self.actor.get_action_dist_params(torch.tensor(observation).to("cuda"))
@@ -267,10 +267,11 @@ class WatershedMix(SAC):
                 ])
             # )
             ,
-            combined_prediction.flatten()
+            combined_prediction.flatten(),
+            prior_mus.detach().cpu().numpy().flatten()
         ))
         cv2.waitKey(1)
-
+        # print(policy_prediction)
         return combined_prediction,None
 
 

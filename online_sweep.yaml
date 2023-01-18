@@ -1,5 +1,5 @@
 program: runTrain.py
-name: R1_MIX_watershed_sole_action_sole_state
+name: R1_MIX_watershed_sole_action_multiple_state
 method: bayes
 metric:
   name: val_reward
@@ -24,7 +24,7 @@ parameters:
   num_workers:
     value: 1
   num_variations:
-    value: 1
+    value: 10
   horizon:
     value: 1
   pickers:

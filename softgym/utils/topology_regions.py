@@ -15,16 +15,16 @@ PLACE = 4
 AVOID = 5
 
 def watershed_regions(
-    img:np.ndarray,
+    img_shape:np.ndarray,
     topo:topology.RopeTopology,
     topo_action:topology.RopeTopologyAction,
     homography:np.ndarray,
     rope_frame_matrix:np.ndarray
 ) -> Tuple[List[int], List[np.ndarray], np.ndarray]:
 
-    def shift_line(line:np.ndarray,amount:float) -> np.ndarray:
+    def shift_line(line:np.ndarray,amount:float,single_sided:bool=True) -> np.ndarray:
         seg = LineString(line.tolist())
-        shifted = seg.buffer(amount,single_sided=True)
+        shifted = seg.buffer(amount,single_sided=single_sided)
         if type(shifted) == Polygon:
             coords = shifted.exterior.coords
         elif type(shifted) == MultiPolygon:
@@ -80,7 +80,7 @@ def watershed_regions(
             over_geometry,under_geometry = under_geometry,over_geometry
 
     extra_geometry = []
-    for seg_num in range(topo.size):
+    for seg_num in range(topo.size + 1):
         if seg_num != topo_action.over_seg and seg_num != topo_action.under_seg:
             extra_geometry.append(rope[:,topo.find_geometry_indices_matching_seg(seg_num)])
     
@@ -102,10 +102,10 @@ def watershed_regions(
     place_pixels = transform_points(place_seed,homography)
     avoid_pixels = transform_points(avoid_seed,homography)
     rope_pixels  = transform_points(rope,homography)
-    extra_geometry_pixels = [transform_points(extra,homography) for extra in extra_geometry]
+    extra_geometry_pixels = [transform_points(shift_line(extra.T,5e-3,single_sided=False),homography) for extra in extra_geometry]
 
     # Create distance mask to limit range of watershed.
-    rope_img = np.zeros_like(img)
+    rope_img = np.zeros(img_shape,dtype=np.uint8)
     rope_img = cv2.polylines(
         rope_img,
         [rope_pixels.T.astype(np.int32)],
@@ -116,7 +116,7 @@ def watershed_regions(
     mask = get_distance_mask(rope_img,0.1,homography)
 
     # Draw the watershed seeds onto a blank image.
-    markers = np.zeros((img.shape[0],img.shape[1]),dtype=np.int32)
+    markers = np.zeros(img_shape[:2],dtype=np.int32)
     for pixels,seed_num in zip([mid_1_pixels,mid_2_pixels,place_pixels,avoid_pixels],[MID_1,MID_2,PLACE,AVOID]):
         markers = cv2.polylines(
             markers,

@@ -226,8 +226,8 @@ class WatershedMix(SAC):
                 [0,0,h,h],
                 [1,1,1,1],
             ]).T
-)
-        pick_indices, regions, markers = TR.watershed_regions(img,topo_state,topo_action,homography,T_mat)
+        )
+        pick_indices, regions, markers = TR.watershed_regions(img.shape,topo_state,topo_action,homography,T_mat)
         regions = [TR.transform_points(region,np.linalg.inv(np.array([
             [np.cos(theta),np.sin(theta),x],
             [-np.sin(theta),np.cos(theta),z],

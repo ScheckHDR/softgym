@@ -331,13 +331,13 @@ while True:
     env.reset()
     for _ in range(2):
         img = env.render_no_gripper()
+        cv2.imshow("img",img)
+        cv2.waitKey(1)
+
         topo = env.get_topological_representation()
-        # print(topo.rep)
-        topo_action = random.choice(topo.get_valid_add_R1())
-        # print(topo_action.as_array)
-        # print(topo.take_action(topo_action)[0].rep)
-        # print("-"*50)
+        topo_action = topology.RopeTopologyAction("+R1",0,1,starts_over=True)
         rope_frame = env.get_rope_frame()
+        
         # Get raw position of rope.
         x,y,z,theta = rope_frame
         T_mat = np.array([
@@ -346,7 +346,7 @@ while True:
             [-np.sin(theta),0,np.cos(theta),z],
             [0,0,0,1]
         ])
-        pick_indices, regions, markers = TR.watershed_regions(img,topo,topo_action,homography,T_mat)
+        pick_indices, regions, markers = TR.watershed_regions(img.shape,topo,topo_action,homography,T_mat)
 
         regions = [TR.transform_points(region,np.linalg.inv(np.array([
             [np.cos(theta),np.sin(theta),x],
@@ -355,8 +355,8 @@ while True:
         ]))) for region in regions]
 
         mu,std = TR.regions_to_normal_params(topo.geometry.T,pick_indices,regions)
-        mu = np.array(mu[:-2])
-        std = np.array(std[:-2])
+        mu = np.array(mu)
+        std = np.array(std)
         cv2.imshow("regions",TR.draw(
             img,
             markers,
@@ -371,7 +371,7 @@ while True:
             ,
             mu
         ))
-        cv2.waitKey(0)
+        cv2.waitKey(1)
         # action = env.action_space.sample()#np.random.normal(mu,std)
 
         # draw_action(img,regions,mu,rope_frame)

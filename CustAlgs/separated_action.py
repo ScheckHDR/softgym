@@ -20,6 +20,8 @@ from stable_baselines3.common.torch_layers import (
 
 from stable_baselines3.dqn.dqn import DQN
 from stable_baselines3.dqn.policies import DQNPolicy, QNetwork
+from stable_baselines3.common.off_policy_algorithm import OffPolicyAlgorithm
+
 
 import gym
 import torch
@@ -29,54 +31,114 @@ import softgym.utils.topology as topology
 
 from shapely.geometry import LineString, Polygon,MultiPolygon
 
+class SplitActionDQN(OffPolicyAlgorithm):
+    """
+    The base for Off-Policy algorithms (ex: SAC/TD3)
 
-class Split_DQN:
-    def __init__(self):
-        h = 720#img.shape[0]
-        w = 720#img.shape[1]
-        s = 0.35
-        self.homography,_ = cv2.findHomography(
-            np.array([
-                [-s, s, s,-s],
-                [-s,-s, s, s],
-                [ 1, 1, 1, 1],
+    :param policy: Policy object
+    :param env: The environment to learn from
+                (if registered in Gym, can be str. Can be None for loading trained models)
+    :param policy_base: The base policy used by this method
+    :param learning_rate: learning rate for the optimizer,
+        it can be a function of the current progress remaining (from 1 to 0)
+    :param buffer_size: size of the replay buffer
+    :param learning_starts: how many steps of the model to collect transitions for before learning starts
+    :param batch_size: Minibatch size for each gradient update
+    :param tau: the soft update coefficient ("Polyak update", between 0 and 1)
+    :param gamma: the discount factor
+    :param train_freq: Update the model every ``train_freq`` steps. Alternatively pass a tuple of frequency and unit
+        like ``(5, "step")`` or ``(2, "episode")``.
+    :param gradient_steps: How many gradient steps to do after each rollout (see ``train_freq``)
+        Set to ``-1`` means to do as many gradient steps as steps done in the environment
+        during the rollout.
+    :param action_noise: the action noise type (None by default), this can help
+        for hard exploration problem. Cf common.noise for the different action noise type.
+    :param replay_buffer_class: Replay buffer class to use (for instance ``HerReplayBuffer``).
+        If ``None``, it will be automatically selected.
+    :param replay_buffer_kwargs: Keyword arguments to pass to the replay buffer on creation.
+    :param optimize_memory_usage: Enable a memory efficient variant of the replay buffer
+        at a cost of more complexity.
+        See https://github.com/DLR-RM/stable-baselines3/issues/37#issuecomment-637501195
+    :param policy_kwargs: Additional arguments to be passed to the policy on creation
+    :param tensorboard_log: the log location for tensorboard (if None, no logging)
+    :param verbose: The verbosity level: 0 none, 1 training information, 2 debug
+    :param device: Device on which the code should run.
+        By default, it will try to use a Cuda compatible device and fallback to cpu
+        if it is not possible.
+    :param support_multi_env: Whether the algorithm supports training
+        with multiple environments (as in A2C)
+    :param create_eval_env: Whether to create a second environment that will be
+        used for evaluating the agent periodically. (Only available when passing string for the environment)
+    :param monitor_wrapper: When creating an environment, whether to wrap it
+        or not in a Monitor wrapper.
+    :param seed: Seed for the pseudo random generators
+    :param use_sde: Whether to use State Dependent Exploration (SDE)
+        instead of action noise exploration (default: False)
+    :param sde_sample_freq: Sample a new noise matrix every n steps when using gSDE
+        Default: -1 (only sample at the beginning of the rollout)
+    :param use_sde_at_warmup: Whether to use gSDE instead of uniform sampling
+        during the warm up phase (before learning starts)
+    :param sde_support: Whether the model support gSDE or not
+    :param remove_time_limit_termination: Remove terminations (dones) that are due to time limit.
+        See https://github.com/hill-a/stable-baselines/issues/863
+    :param supported_action_spaces: The action spaces supported by the algorithm.
+    """
 
-            ]).T,
-            np.array([
-                [0,w,w,0],
-                [0,0,h,h],
-                [1,1,1,1],
-            ]).T
+    def __init__(
+        self,
+        policy: Type[BasePolicy],
+        env: Union[GymEnv, str],
+        learning_rate: Union[float, Schedule],
+        buffer_size: int = 1_00,  # 1e6
+        learning_starts: int = 100,
+        batch_size: int = 256,
+        tau: float = 0.005,
+        gamma: float = 0.99,
+        train_freq: Union[int, Tuple[int, str]] = (1, "step"),
+        gradient_steps: int = 1,
+        action_noise: Optional[ActionNoise] = None,
+        replay_buffer_class: Optional[ReplayBuffer] = None,
+        replay_buffer_kwargs: Optional[Dict[str, Any]] = None,
+        optimize_memory_usage: bool = False,
+        policy_kwargs: Optional[Dict[str, Any]] = None,
+        tensorboard_log: Optional[str] = None,
+        verbose: int = 0,
+        device: Union[torch.device, str] = "auto",
+        support_multi_env: bool = False,
+        create_eval_env: bool = False,
+        monitor_wrapper: bool = True,
+        seed: Optional[int] = None,
+        use_sde: bool = False,
+        sde_sample_freq: int = -1,
+        use_sde_at_warmup: bool = False,
+        remove_time_limit_termination: bool = False,
+        supported_action_spaces: Optional[Tuple[gym.spaces.Space, ...]] = None,
+    ):
+
+        super().__init__(
+            policy=policy,
+            env=env,
+            policy_base=DQNPolicy,
+            learning_rate=learning_rate,
+            buffer_size=buffer_size,
+            policy_kwargs=policy_kwargs,
+            tensorboard_log=tensorboard_log,
+            verbose=verbose,
+            device=device,
+            support_multi_env=support_multi_env,
+            create_eval_env=create_eval_env,
+            monitor_wrapper=monitor_wrapper,
+            seed=seed,
+            sde_support=False,
+            use_sde=use_sde,
+            sde_sample_freq=sde_sample_freq,
+            supported_action_spaces=(gym.spaces.Box,gym.spaces.Discrete),
         )
 
-    def predict(
-        self,
-        observation: np.ndarray,
-    ) -> np.ndarray:
+        self._setup_model()
 
-        topo_state = self.env.env_method("get_topological_representation")[0]
-        topo_action = self.env.env_method("get_topological_action")[0]
-        rope_frame = self.env.env_method("get_rope_frame")[0]
-
-        x,y,z,theta = rope_frame
-        T_mat = np.array([
-            [np.cos(theta),0,np.sin(theta),x],
-            [0,1,0,y],
-            [-np.sin(theta),0,np.cos(theta),z],
-            [0,0,0,1]
-        ])
-
-        pick_indices, regions, markers = watershed_regions(img_shape,topo_state,topo_action,self.homography,T_mat)
-
-        #pick actions = pick indices
-        pick_Q_values = self.pick_q(observation) # Assume Image?
-        
-
-        #place actions = sample place
-
-        #mid_1 actions = sample mid_1
-
-        #mid_2 actions = sample mid_2
+    def predict(*args,**kwargs):
+        pass
 
 
 ################# Helper Functions ###########################
@@ -92,8 +154,8 @@ def watershed_regions(
     img_shape:np.ndarray,
     topo:topology.RopeTopology,
     topo_action:topology.RopeTopologyAction,
-    homography:np.ndarray,
-    rope_frame_matrix:np.ndarray
+    homography:np.ndarray = np.identity(3),
+    rope_frame_matrix:np.ndarray = np.identity(3)
 ) -> Tuple[List[int], List[np.ndarray], np.ndarray]:
 
     def shift_line(line:np.ndarray,amount:float,single_sided:bool=True) -> np.ndarray:
@@ -120,45 +182,12 @@ def watershed_regions(
     # Get rope projection.
     rope = (rope_frame_matrix @ np.vstack([topo.geometry.T,np.ones(topo.geometry.shape[0])]))[[0,2],:]
 
-    # Find geometry of interest from the topological action
-    over_indices,over_geometry,under_geometry,extra_geometry = get_geometry_of_interest_from_topological_action(
+    tmp = get_geometry_of_interest_from_topological_action(
         topo,
         topo_action,
         rope_geometry=rope,
     )
-    if topo_action.under_seg is not None:
-        over_indices = topo.find_geometry_indices_matching_seg(topo_action.over_seg)
-        under_indices = topo.find_geometry_indices_matching_seg(topo_action.under_seg)
-        if len(over_indices) == 1:
-            over_indices.append(over_indices[0])
-        if len(under_indices) == 1:
-            under_indices.append(under_indices[0])
-        over_geometry = rope[:,over_indices]
-        under_geometry = rope[:,under_indices]
-    else:
-        segment_idxs = topo.find_geometry_indices_matching_seg(topo_action.over_seg)
-        if len(segment_idxs) == 1:
-            segment_idxs.append(segment_idxs[0])
-        l = len(segment_idxs)
-        over_indices = segment_idxs[:l//2]
-        under_indices = segment_idxs[l//2:]
-
-        over_geometry = rope[:,over_indices]
-        under_geometry = rope[:,under_indices]
-
-        if l < 4:
-            mid_point = (over_geometry[:,-1:] + under_geometry[:,:1])*0.5
-            over_geometry = np.hstack([over_geometry,mid_point])
-            under_geometry = np.hstack([under_geometry,mid_point])
-        
-        if not topo_action.starts_over:
-            over_geometry,under_geometry = under_geometry,over_geometry
-
-    extra_geometry = []
-    for seg_num in range(topo.size + 1):
-        if seg_num != topo_action.over_seg and seg_num != topo_action.under_seg:
-            extra_geometry.append(rope[:,topo.find_geometry_indices_matching_seg(seg_num)])
-    
+    over_indices,over_geometry,under_geometry,extra_geometry = tmp   
 
 
     # Shift segments slightly so that they can be used as seeds in the watershed algorithm.
@@ -167,8 +196,6 @@ def watershed_regions(
     mid_2_seed = shift_line(under_geometry.T,5e-3*topo_action.chirality)
     place_seed = shift_line(under_geometry.T,-5e-3*topo_action.chirality)
     avoid_seed = shift_line(over_geometry.T,-5e-3*topo_action.chirality)
-
-
 
     # Apply homography.
     pick_pixels  = transform_points(pick_region,homography)
@@ -276,7 +303,6 @@ def get_geometry_of_interest_from_topological_action(
 
     return over_indices,over_geometry,under_geometry,extra_geometry        
 
-
 def transform_points(points:np.ndarray,transformation_matrix:np.ndarray) -> np.ndarray:
     return (transformation_matrix @ np.vstack([points,np.ones(points.shape[1])]))[:-1,:]
 
@@ -367,6 +393,15 @@ def denormed_action_to_waypoints(
     pick_coords_rel = rope_geometry[:,action[0]]
     waypoints_rel = np.hstack([pick_coords_rel.reshape((2,1)),pick_coords_rel.reshape((2,1))+np.array(action[1:]).reshape((-1,2)).T])
     return transform_points(waypoints_rel, transform_mat)
+
+def image_waypoints_to_normed_action(waypoints,rope_geometry,transform_mat):
+    waypoints_rope_frame = transform_points(waypoints,transform_mat)
+    waypoints_rel = waypoints_rope_frame[:,1:] - waypoints_rope_frame[:,0]
+
+    pick_index = np.argmin(np.linalg.norm(rope_geometry - waypoints_rope_frame[0]))
+
+    action = np.hstack([pick_index,waypoints_rel.reshape(-1)])
+    return normalise_action(action)
 
 def draw(
     base_img:np.ndarray,

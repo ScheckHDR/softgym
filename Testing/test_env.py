@@ -106,7 +106,11 @@ class RopeKnotEnv(RopeNewEnv):
         elif self.task == "KNOT_ACTION_+R1":
             dim = (points-1)*3 + 7
 
-        self.observation_space = Box(low=-np.ones((1,dim)),high=np.ones((1,dim)))
+        if self.observation_mode == "cam_rgb":
+            dummy_obs = self.render()
+            self.observation_space = Box(low=0,high=255,shape=dummy_obs.shape,dtype=dummy_obs.dtype)
+        else:
+            self.observation_space = Box(low=-np.ones((1,dim)),high=np.ones((1,dim)))
 
         self.workspace =np.array([[-0.35,0.35],[-0.35,0.35]])
         self.goal = goal

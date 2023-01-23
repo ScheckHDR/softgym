@@ -326,16 +326,19 @@ class RopeKnotEnv(RopeNewEnv):
         
         return np.expand_dims(obs,0)
     def get_obs(self):
-        obs = self._get_obs()
-        obs_flattened = obs.flatten()
-        topo_action = topology.RopeTopologyAction(
-            "+R1",
-            int(obs_flattened[-3]),
-            chirality=int(obs_flattened[-2]),
-            starts_over=obs_flattened[-1] > 0
-        )
-        self.assign_goal(self.get_topological_representation().take_action(topo_action)[0])
-        return obs
+        if self.observation_mode == "cam_rgb":
+            return self.render_no_gripper()
+        else:
+            obs = self._get_obs()
+            obs_flattened = obs.flatten()
+            topo_action = topology.RopeTopologyAction(
+                "+R1",
+                int(obs_flattened[-3]),
+                chirality=int(obs_flattened[-2]),
+                starts_over=obs_flattened[-1] > 0
+            )
+            self.assign_goal(self.get_topological_representation().take_action(topo_action)[0])
+            return obs
 
     def get_keypoints(self):
         particle_pos = self.get_geoms(True)
@@ -348,7 +351,7 @@ class RopeKnotEnv(RopeNewEnv):
         picker_pos, particle_pos = self.action_tool._get_pos()
         # self.action_tool.step(np.array([1,1,1,1],ndmin=2),renderer = lambda *args,**kwargs : None)
         self.action_tool.set_picker_pos(np.array([1,1,1]))
-        frame = cv2.cvtColor(super().render(mode=mode)[-self.camera_height:,:self.camera_width,:],cv2.COLOR_RGB2BGR)
+        frame = cv2.cvtColor(super().render(mode=mode),cv2.COLOR_RGB2BGR)
         self.action_tool._set_pos(picker_pos,particle_pos)
         return frame
 

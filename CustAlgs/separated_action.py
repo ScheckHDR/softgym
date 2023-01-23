@@ -2,7 +2,8 @@ import cv2
 import numpy as np
 from typing import Any, Dict, List, Optional, Tuple, Type, Union
 
-from stable_baselines3.common.buffers import ReplayBuffer
+from stable_baselines3.common.buffers import DictReplayBuffer, ReplayBuffer
+from stable_baselines3.her.her_replay_buffer import HerReplayBuffer
 from stable_baselines3.common.callbacks import BaseCallback
 from stable_baselines3.common.noise import ActionNoise, VectorizedActionNoise
 from stable_baselines3.common.type_aliases import RolloutReturn,  TrainFreq, TrainFrequencyUnit
@@ -26,10 +27,64 @@ from stable_baselines3.common.off_policy_algorithm import OffPolicyAlgorithm
 import gym
 import torch
 import torch.nn as nn
+import torch.nn.functional as F
 
 import softgym.utils.topology as topology
 
 from shapely.geometry import LineString, Polygon,MultiPolygon
+
+class FCN(BasePolicy):
+    def __init__(
+        self,
+        conv_channel_sizes:List[int],
+        deconv_channel_sizes:List[int],
+        observation_space: gym.spaces.Space,
+        action_space: gym.spaces.Space,
+        features_extractor: nn.Module,
+        # features_dim: int,
+        # net_arch: Optional[List[int]] = None,
+        # activation_fn: Type[nn.Module] = nn.ReLU,
+        normalize_images: bool = True,
+    ):
+        super().__init__(
+            observation_space = observation_space,
+            action_space = action_space,
+            features_extractor = features_extractor,
+            # features_dim = features_dim,
+            # net_arch = net_arch,
+            # activation_fn = activation_fn,
+            normalize_images = normalize_images,
+        )
+
+        self.convs = [
+            nn.Conv2d(
+                conv_channel_sizes[i-1],
+                conv_channel_sizes[i],
+                kernel_size=3,
+                stride=1,
+                padding=1,
+            ) 
+        for i in range(1,len(conv_channel_sizes))]
+        self.deconvs = [
+            nn.ConvTranspose2d(
+                deconv_channel_sizes[i-1],
+                deconv_channel_sizes[i],
+                kernel_size=3,
+                stride=1,
+                padding=1,
+            )
+        for i in range(1,len(deconv_channel_sizes))]
+        self.q_net = nn.Sequential(*[*self.convs,*self.deconvs])
+
+    def forward(self, x):
+        return self.q_net(x.float())
+
+    def _predict(self, observation: torch.Tensor, deterministic: bool = True) -> torch.Tensor:
+        q_values = self.forward(observation)
+        return q_values
+        # Greedy action
+        # action = q_values.argmax(dim=1).reshape(-1)
+        # return action
 
 class SplitActionDQN(OffPolicyAlgorithm):
     """
@@ -89,6 +144,7 @@ class SplitActionDQN(OffPolicyAlgorithm):
         policy: Type[BasePolicy],
         env: Union[GymEnv, str],
         learning_rate: Union[float, Schedule],
+        q_net_order:List[int] = [0,1,2,3],
         buffer_size: int = 1_00,  # 1e6
         learning_starts: int = 100,
         batch_size: int = 256,
@@ -134,13 +190,127 @@ class SplitActionDQN(OffPolicyAlgorithm):
             sde_sample_freq=sde_sample_freq,
             supported_action_spaces=(gym.spaces.Box,gym.spaces.Discrete),
         )
-
+        self.q_net_order = q_net_order
         self._setup_model()
 
-    def predict(*args,**kwargs):
-        pass
+    # def predict(*args,**kwargs):
+    #     pass
 
 
+class FcnPolicy(DQNPolicy):
+    
+    def __init__(
+        self,
+        observation_space: gym.spaces.Space,
+        action_space: gym.spaces.Space,
+        lr_schedule: Schedule,
+        net_arch: Optional[List[int]] = None,
+        activation_fn: Type[nn.Module] = nn.ReLU,
+        features_extractor_class: Type[BaseFeaturesExtractor] = FlattenExtractor,
+        features_extractor_kwargs: Optional[Dict[str, Any]] = None,
+        normalize_images: bool = True,
+        optimizer_class: Type[torch.optim.Optimizer] = torch.optim.Adam,
+        optimizer_kwargs: Optional[Dict[str, Any]] = None,
+        q_net_order=[0,1,2,3]
+    ):
+        self.q_net_order = q_net_order
+        super().__init__(
+            observation_space = observation_space,
+            action_space = action_space,
+            lr_schedule = lr_schedule,
+            net_arch = net_arch,
+            activation_fn = activation_fn,
+            features_extractor_class = features_extractor_class,
+            features_extractor_kwargs = features_extractor_kwargs,
+            normalize_images = normalize_images,
+            optimizer_class = optimizer_class,
+            optimizer_kwargs = optimizer_kwargs,
+        )
+        s = 0.35
+        w = 200
+        h = 200
+        self.homography,_ = cv2.findHomography(
+            np.array([
+                [-s, s, s,-s],
+                [-s,-s, s, s],
+                [ 1, 1, 1, 1],
+
+            ]).T,
+            np.array([
+                [0,w,w,0],
+                [0,0,h,h],
+                [1,1,1,1],
+            ]).T
+        )
+        self.softmax = nn.Softmax2d()
+
+    def _build(self, lr_schedule: Schedule) -> None:
+        """
+        Create the network and the optimizer.
+
+        Put the target network into evaluation mode.
+
+        :param lr_schedule: Learning rate schedule
+            lr_schedule(1) is the initial learning rate
+        """
+
+        net_params = [{
+            "conv_channel_sizes": [3 + net_num,512,256,128,64,32],
+            "deconv_channel_sizes": [32,64,128,256,512,1],
+            "observation_space": self.observation_space,
+            "action_space": self.action_space,
+            "features_extractor": None,
+        } for net_num in range(len(self.q_net_order))]
+
+        self.q_FCNs = [FCN(**params) for params in net_params]
+        self.target_q_FCNs = [FCN(**params) for params in net_params]
+        for i in range(len(self.q_FCNs)):
+            self.target_q_FCNs[i].load_state_dict(self.q_FCNs[i].state_dict())
+
+        # Setup optimizer with initial learning rate
+        self.q_optimizer = self.optimizer_class([param for q in self.q_FCNs for param in list(q.parameters())], lr=lr_schedule(1), **self.optimizer_kwargs)
+        self.target_q_optimizer = self.optimizer_class([param for q in self.target_q_FCNs for param in list(q.parameters())], lr=lr_schedule(1), **self.optimizer_kwargs)
+
+    def set_training_mode(self, mode: bool) -> None:
+        """
+        Put the policy in either training or evaluation mode.
+
+        This affects certain modules, such as batch normalisation and dropout.
+
+        :param mode: if true, set to training mode, else set to evaluation mode
+        """
+        for i in range(len(self.q_FCNs)):
+            self.q_FCNs[i].set_training_mode(mode)
+        #TODO: Repeat on target networks?
+        self.training = mode
+
+    def forward(
+        self, 
+        obs: torch.Tensor, 
+        deterministic: bool = True
+    ) -> torch.Tensor:
+        return self._predict(obs, deterministic=deterministic)
+
+    def _predict(
+        self, 
+        obs: torch.Tensor, 
+        topo_state:topology.RopeTopology,
+        topo_action:topology.RopeTopologyAction,
+        deterministic: bool = True,
+    ) -> torch.Tensor:
+        x = obs.clone()
+        if self.training:
+            pick_indices, regions, markers = watershed_regions(obs.shape[1:],topo_state,topo_action,self.homography,np.identity(4))
+
+            for net ,marker_num in zip(self.q_FCNs,[PICK,PLACE,MID_2,MID_1]):
+                y = net(x)
+                y[markers != marker_num] = 0
+                y = self.softmax(y)
+                x = torch.cat([x,y],dim=1)
+        for net in self.q_FCNs:
+            y = net(x)
+            x = torch.cat([x,y],dim=1)
+        return x
 ################# Helper Functions ###########################
 
 

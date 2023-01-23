@@ -32,7 +32,7 @@ import cv2
 
 import torch
 
-from CustAlgs.separated_action import SplitActionDQN
+from CustAlgs.separated_action import SplitActionDQN, FcnPolicy
 
 
 def const__schedule(init_val:float):
@@ -248,6 +248,8 @@ def main(default_config):
         "goal_crossings": wandb.config.goal_crossings,
         "goal": topology.COMMON_KNOTS["trefoil_knot_O-"],
         "task": "KNOT_ACTION_+R1",
+        "camera_width": 200,
+        "camera_height": 200,
 
     }
     
@@ -272,7 +274,7 @@ def main(default_config):
         # model = WatershedMix(
         model = SplitActionDQN(
         # model = QT_OPT(
-            "CnnPolicy",
+            FcnPolicy,
             envs,
             verbose = 1,
             learning_starts=0,

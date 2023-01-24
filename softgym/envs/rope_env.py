@@ -2,7 +2,7 @@ import numpy as np
 from gym.spaces import Box
 import pyflex
 from softgym.envs.flex_env import FlexEnv
-from softgym.action_space.action_space import Picker
+from softgym.action_space.action_space import Picker, PickerTraj
 from softgym.action_space.robot_env import RobotBase
 from copy import deepcopy
 
@@ -12,19 +12,25 @@ class RopeNewEnv(FlexEnv):
         self.render_mode = render_mode
         super().__init__(**kwargs)
 
-        assert observation_mode in ['point_cloud', 'cam_rgb', 'key_point']
-        assert action_mode in ['picker', 'sawyer', 'franka']
+        assert observation_mode in ['point_cloud', 'cam_rgb', 'key_point','topology','topo_and_key_point']
+        assert action_mode in ['picker', 'picker_trajectory', 'sawyer', 'franka']
         self.observation_mode = observation_mode
         self.action_mode = action_mode
         self.num_picker = num_picker
+        self.picker_radius = picker_radius
+
+        self.workspace = np.array([
+            [-0.35, 0. ,-0.35],
+            [ 0.35, 0.3, 0.35]
+        ])
 
         if action_mode == 'picker':
             self.action_tool = Picker(num_picker, picker_radius=picker_radius, picker_threshold=0.005, 
-            particle_radius=0.025, picker_low=(-0.35, 0., -0.35), picker_high=(0.35, 0.3, 0.35))
+            particle_radius=0.025, picker_low=self.workspace[0,:], picker_high=self.workspace[1,:])
             self.action_space = self.action_tool.action_space
         elif action_mode in ['sawyer', 'franka']:
             self.action_tool = RobotBase(action_mode)
-
+            
         if observation_mode in ['key_point', 'point_cloud']:
             if observation_mode == 'key_point':
                 obs_dim = 10 * 3
@@ -32,11 +38,11 @@ class RopeNewEnv(FlexEnv):
                 max_particles = 41
                 obs_dim = max_particles * 3
                 self.particle_obs_dim = obs_dim
-            if action_mode in ['picker']:
+            if action_mode.startswith('picker'):
                 obs_dim += num_picker * 3
             else:
                 raise NotImplementedError
-            self.observation_space = Box(np.array([-np.inf] * obs_dim), np.array([np.inf] * obs_dim), dtype=np.float32)
+            self.observation_space = Box(np.array([-1] * obs_dim), np.array([1] * obs_dim), dtype=np.float32)
         elif observation_mode == 'cam_rgb':
             self.observation_space = Box(low=-np.inf, high=np.inf, shape=(self.camera_height, self.camera_width, 3),
                                          dtype=np.float32)
@@ -134,6 +140,9 @@ class RopeNewEnv(FlexEnv):
         max_x = np.max(pos[:, 0])
         max_y = np.max(pos[:, 2])
         return 0.5 * (min_x + max_x), 0.5 * (min_y + max_y)
+
+
+
 
 
 

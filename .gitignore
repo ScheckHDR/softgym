@@ -19,3 +19,10 @@ PyFlex/bindings/examples/*/
 PyFlex/bindings/examples/*.gif
 
 build/
+
+miscTesting
+.vscode
+output/
+wandb*/
+lightning_logs
+Datasets/*

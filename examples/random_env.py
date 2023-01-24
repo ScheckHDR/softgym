@@ -51,6 +51,7 @@ def main():
     if not env_kwargs['use_cached_states']:
         print('Waiting to generate environment variations. May take 1 minute for each variation...')
     env = normalize(SOFTGYM_ENVS[args.env_name](**env_kwargs))
+    # env.get_cached_configs_and_states()
     env.reset()
 
     frames = [env.get_image(args.img_size, args.img_size)]

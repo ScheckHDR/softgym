@@ -4,6 +4,7 @@ from gym.spaces import Box
 from softgym.utils.misc import rotation_2d_around_center, extend_along_center
 import pyflex
 import scipy.spatial
+import time
 
 
 class ActionToolBase(metaclass=abc.ABCMeta):
@@ -245,6 +246,60 @@ class PickerPickPlace(Picker):
             if np.alltrue(dist < self.delta_move):
                 break
         return model_actions, curr_pos
+
+
+
+class PickerTraj(PickerPickPlace):
+    def __init__(self, num_picker, num_traj_points = 1000, env=None, picker_low=None, picker_high=None, **kwargs):
+        super().__init__(num_picker=num_picker,
+                         picker_low=picker_low,
+                         picker_high=picker_high,
+                         **kwargs)
+
+        picker_low, picker_high = list(picker_low), list(picker_high)
+        # assuming low = (0,0,0) and high = (1,1,1)
+        self.action_space = Box(np.zeros((num_picker,num_traj_points,len(picker_low))),
+                                np.ones((num_picker,num_traj_points,len(picker_low))),dtype=np.float32)
+        # self.action_space = Box(np.array([*picker_low, 0.] * self.num_picker),
+        #                         np.array([*picker_high, 1.] * self.num_picker), dtype=np.float32)
+        self.delta_move = 0.01
+        self.env = env
+
+    def step(self,action,renderer):
+
+        # total_steps = 0
+        # curr_pos = np.array(pyflex.get_shape_states()).reshape(-1, 14)[:, :3]
+        # end_pos = np.vstack([self._apply_picker_boundary(picker_pos) for picker_pos in action[:, :3]])
+        # dist = np.linalg.norm(curr_pos - end_pos, axis=1)
+        # num_step = np.max(np.ceil(dist / self.delta_move))
+        # if num_step < 0.1:
+        #     return
+        # delta = (end_pos - curr_pos) / num_step
+        # norm_delta = np.linalg.norm(delta)
+
+        micro_action = np.zeros(4*action.shape[0])
+        # move to pick location
+        for picker_num in range(action.shape[0]):
+            micro_action[picker_num*4:picker_num*4 +3] = action[picker_num][0]
+            micro_action[picker_num*4+3] = 0 # no grasp.
+        super().step(micro_action)
+
+        # Move while grasping.
+        for i in range(1,action.shape[1]):
+            for picker_num in range(action.shape[0]):
+                micro_action[picker_num*4:picker_num*4 +3] = action[picker_num][i]
+                micro_action[picker_num*4+3] = 1 # grasp.
+
+            super().step(micro_action)
+            renderer(mode='rgb_array')
+        
+        # Release object
+        for picker_num in range(action.shape[0]):
+            # position should still be set to the last position of trajectory.
+            micro_action[picker_num*4+1] += 1 # lift away from the table.
+            micro_action[picker_num*4+3] = 0 # no grasp.
+        super().step(micro_action)
+
 
 
 from softgym.utils.gemo_utils import intrinsic_from_fov, get_rotation_matrix

@@ -8,6 +8,7 @@ from softgym.envs.cloth_fold import ClothFoldEnv
 from softgym.envs.cloth_drop import ClothDropEnv
 from softgym.envs.cloth_fold_crumpled import ClothFoldCrumpledEnv
 from softgym.envs.cloth_fold_drop import ClothFoldDropEnv
+from softgym.envs.rope_knot import RopeKnotEnv
 
 from collections import OrderedDict
 
@@ -58,6 +59,17 @@ env_arg_dict = {
                           'num_variations': 1000,
                           'use_cached_states': True,
                           'deterministic': False},
+    'RopeKnotting': {'observation_mode': 'key_point',
+                     'action_mode': 'picker',
+                     'num_picker': 2,
+                     'render': True,
+                     'headless': True,
+                     'horizon': 100,  # this task is harder than just straigtening rope, therefore has larger horizon.
+                     'action_repeat': 8,
+                     'render_mode': 'cloth',
+                     'num_variations': 1000,
+                     'use_cached_states': True,
+                     'deterministic': False},
     'ClothFlatten': {'observation_mode': 'cam_rgb',
                      'action_mode': 'picker',
                      'num_picker': 2,
@@ -193,4 +205,5 @@ SOFTGYM_ENVS = OrderedDict({
     'ClothFoldCrumpled': ClothFoldCrumpledEnv,
     'RopeFlatten': RopeFlattenEnv,
     'RopeConfiguration': RopeConfigurationEnv,
+    'RopeKnotting': RopeKnotEnv,
 })

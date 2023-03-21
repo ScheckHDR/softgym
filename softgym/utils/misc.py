@@ -15,7 +15,6 @@ def rotation_2d_around_center(pt, center, theta):
     new_pt = np.array([np.cos(theta) * x - np.sin(theta) * z, y, np.sin(theta) * x + np.cos(theta) * z]) + center
     return new_pt
 
-
 def extend_along_center(pt, center, add_dist, min_dist, max_dist):
     pt = pt.copy()
     curr_dist = np.linalg.norm(pt - center)
@@ -25,13 +24,11 @@ def extend_along_center(pt, center, add_dist, min_dist, max_dist):
     pt = pt + center
     return pt
 
-
 def vectorized_range(start, end):
     """  Return an array of NxD, iterating from the start to the end"""
     N = int(np.max(end - start)) + 1
     idxes = np.floor(np.arange(N) * (end - start)[:, None] / N + start[:, None]).astype('int')
     return idxes
-
 
 def vectorized_meshgrid(vec_x, vec_y):
     """vec_x in NxK, vec_y in NxD. Return xx in Nx(KxD) and yy in Nx(DxK)"""
@@ -39,7 +36,6 @@ def vectorized_meshgrid(vec_x, vec_y):
     vec_x = np.tile(vec_x[:, None, :], [1, D, 1]).reshape(N, -1)
     vec_y = np.tile(vec_y[:, :, None], [1, 1, K]).reshape(N, -1)
     return vec_x, vec_y
-
 
 def rotate_rigid_object(center, axis, angle, pos=None, relative=None):
     '''
@@ -60,7 +56,6 @@ def rotate_rigid_object(center, axis, angle, pos=None, relative=None):
     after_rotate = quat.rotate(relative)
     return after_rotate + center
 
-
 def quatFromAxisAngle(axis, angle):
     '''
     given a rotation axis and angle, return a quatirian that represents such roatation.
@@ -76,3 +71,4 @@ def quatFromAxisAngle(axis, angle):
     quat = np.array([axis[0], axis[1], axis[2], w])
 
     return quat
+

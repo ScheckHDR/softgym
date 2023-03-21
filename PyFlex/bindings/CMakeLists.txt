@@ -11,7 +11,9 @@ set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -D_FORCE_INLINES -fPIC -fpermissive -fno
 
 set(ROOT $ENV{PYFLEXROOT})
 set(EXAMPLE_BIN pyflex)
+# add_library(libc_compat ${ROOT}/bindings/libc_compat/libc_compat.c)
 
+set(SOURCES ${SOURCES} ${ROOT}/bindings/libc_compat/libc_compat.c)
 set(SOURCES ${SOURCES} ${ROOT}/bindings/pyflex.cpp)
 set(SOURCES ${SOURCES} ${ROOT}/bindings/imgui.cpp)
 set(SOURCES ${SOURCES} ${ROOT}/bindings/shadersDemoContext.cpp)

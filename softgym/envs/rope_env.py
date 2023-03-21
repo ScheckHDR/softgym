@@ -28,6 +28,15 @@ class RopeNewEnv(FlexEnv):
             self.action_tool = Picker(num_picker, picker_radius=picker_radius, picker_threshold=0.005, 
             particle_radius=0.025, picker_low=self.workspace[0,:], picker_high=self.workspace[1,:])
             self.action_space = self.action_tool.action_space
+        elif self.action_mode == "picker_trajectory":
+            self.action_tool = PickerTraj(
+                self.num_picker, 
+                picker_radius=self.picker_radius, 
+                picker_threshold=0.005, 
+                particle_radius=0.025, 
+                picker_low=self.workspace[0,:], 
+                picker_high=self.workspace[1,:]
+            )
         elif action_mode in ['sawyer', 'franka']:
             self.action_tool = RobotBase(action_mode)
             
@@ -55,7 +64,7 @@ class RopeNewEnv(FlexEnv):
         config = {
             'init_pos': [0., 0., 0.],
             'stretchstiffness': 0.9,
-            'bendingstiffness': 0.8,
+            'bendingstiffness': 10,
             'radius': 0.025,
             'segment': 40,
             'mass': 0.5,

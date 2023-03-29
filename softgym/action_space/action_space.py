@@ -280,9 +280,11 @@ class PickerTraj(PickerPickPlace):
         micro_action = np.zeros(4*action.shape[0])
         # move to pick location
         for picker_num in range(action.shape[0]):
-            micro_action[picker_num*4:picker_num*4 +3] = action[picker_num][0]
-            micro_action[picker_num*4+3] = 0 # no grasp.
-        super().step(micro_action)
+            self.set_picker_pos(action[picker_num][0])
+        # for picker_num in range(action.shape[0]):
+        #     micro_action[picker_num*4:picker_num*4 +3] = action[picker_num][0]
+        #     micro_action[picker_num*4+3] = 0 # no grasp.
+        # super().step(micro_action)
 
         # Move while grasping.
         for i in range(1,action.shape[1]):
@@ -299,6 +301,7 @@ class PickerTraj(PickerPickPlace):
             micro_action[picker_num*4+1] += 1 # lift away from the table.
             micro_action[picker_num*4+3] = 0 # no grasp.
         super().step(micro_action)
+        self.set_picker_pos(np.array([1,1,1]))
 
 
 

@@ -48,7 +48,7 @@ public:
         Vec3 start = Vec3(init_x, init_y, init_z);
 
         CreateRope(r, start, d0, stretchstiffness, int(segment), segment * radius * 0.5, 
-            NvFlexMakePhase(group++, eNvFlexPhaseSelfCollide | eNvFlexPhaseSelfCollideFilter), 0.0f, 1 / mass, 0.075f, bendingstiffness);
+            NvFlexMakePhase(group++, eNvFlexPhaseSelfCollide | eNvFlexPhaseSelfCollideFilter), 0.0f, 1 / mass, 0.0f, bendingstiffness);
 
         g_ropes.push_back(r);
 		

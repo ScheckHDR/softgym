@@ -983,7 +983,7 @@ void CreateRope(Rope& rope, Vec3 start, Vec3 dir, float stretchStiffness, int se
 		
 		// bending spring
 		if (i > 0)
-			CreateSpring(prev-1, prev+1, bendingStiffness*0.5f, give);
+			CreateSpring(prev-1, prev+1, bendingStiffness, give);
 	}
 }
 

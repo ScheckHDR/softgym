@@ -6,15 +6,19 @@ import pickle
 import os.path as osp
 import random
 from tqdm import tqdm
-from typing import List,Tuple,Dict,Union,Optional
+from typing import List,Tuple,Dict,Union,Optional,Any
+import os
 
 import cv2
+import gym
 from gym.spaces import Box, MultiDiscrete
 import pyflex
 from softgym.envs.rope_env import RopeNewEnv
 from softgym.action_space.action_space import PickerTraj
 from softgym.utils.pyflex_utils import random_pick_and_place, center_object
 from softgym.utils.trajectories import simple_trajectory
+from softgym.action_space.action_space import Picker, PickerTraj, PickerPickPlace
+from softgym.action_space.robot_env import RobotBase
 
 import topology
 from topology.utils import transform_points,rescale
@@ -24,50 +28,44 @@ from topology import Regions as TR
 from sb3_contrib.common.maskable.distributions import MaskableMultiCategoricalDistribution
 
 
-class RopeKnotEnv(RopeNewEnv):
-    ROPE_LINK_LENGTH = 0.0135 # approximate length of a single link. Seems to be some ability to stretch.
-    def __init__(self,
-                 goals:List[topology.RopeTopology],
-                 cached_states_path:str="rope_knot_init_states.pkl",
-                  **kwargs
-                 ):
-        self.headless:bool = kwargs["headless"]
-        kwargs["headless"] = True # Manually do the rendering with the overlay.
-        super().__init__(picker_radius = 0.005,cached_states_path=cached_states_path,**kwargs)
-        
+class RopeKnotBASE(RopeNewEnv):    
+    def __init__(
+            self,
+            goals:Optional[Union[Any,Iterable]]=None,
+            allowed_initial_topologies:Optional[List[topology.RopeTopology]]=None,
+            random_goal_on_reset:bool = False,
+            num_reset_deformations:int = 0,
+            reset_deformation_magnitude:float = 0,
+            observation_mode:str = "cam_rgb",
+            action_mode:str = 'picker',
+            num_picker:int = 1,
+            allowed_action_types:List[str]=["+C","+R1","+R2"],
+            grid_resize_factor:int = -1, #-1 will disable.
+            grid_side_points:int = 25,
+            grid_side_length:float = 0.5
+        ):
+        assert not (num_reset_deformations > 0 and reset_deformation_magnitude == 0), f"Requesting {num_reset_deformations} random perturbations on reset, but 0 magnitude has been selected."
+        self.workspace = np.array([
+            [-0.35, 0. ,-0.35],
+            [ 0.35, 0.3, 0.35]
+        ])
 
-        # Reset stuff
-        self.allowed_initial_topologies:List[topology.RopeTopology] = kwargs.get("allowed_initial_topologies",None)
-        self.random_goal_on_reset:bool = kwargs.get("random_goal_on_reset",False)
-        self.num_reset_perturbations:int = kwargs.get("reset_perturbations",0)
-        self.reset_pertubation_magnitude:float = kwargs.get("reset_pertubation_magnitude",0)
-        assert not (self.num_reset_perturbations > 0 and self.reset_pertubation_magnitude == 0), f"Requesting {self.num_reset_perturbations} random perturbations on reset, but 0 magnitude has been selected."
+        self.allowed_initial_topologies = allowed_initial_topologies
+        self.observation_mode = observation_mode
+        self.action_mode = action_mode
+        self.num_picker = num_picker
 
-        # Initial state generation
-        self.force_trivial:bool = kwargs.get("force_trivial",False)
-        self.get_cached_configs_and_states(cached_states_path, self.num_variations)
-
-        # Observation stuff.
-        self.num_rope_particles:int = self.cached_configs[0]["segment"] + 1
-        dim:int = (self.num_rope_particles-1)*3 + topology.RopeTopologyAction("NA",0).as_array().size # Adds the extra dims needed for the topological action params.
-        self.observation_space:Box = Box(low=-1,high=1,shape=(1,dim))
-
-        # Action stuff
-        self.grid_resize_factor:float = kwargs.get("grid_resize_factor",-1) # -1 will disable.
-        self.grid_size:int = 15
-        self.grid_length:float = kwargs.get("grid_length",0.5)
-        self.action_space:MultiDiscrete = MultiDiscrete([self.num_rope_particles] + [self.grid_size**2]*3)
-        self.allowed_action_types:List[str] = kwargs.get("allowed_action_types",["+C","+R1","+R2"])
-
-        # Goal stuff
         if not isinstance(goals,Iterable):
             goals = [goals]
         self.goal_space = goals
         self.goal = self.goal_space[0]
         self.sub_goal = None
 
-        self.action_tool.set_picker_pos(np.array([1,1,1]))
-        self._desired_action = None
+        self.allowed_action_types = allowed_action_types
+
+        self.grid_resize_factor = grid_resize_factor
+        self.grid_size = grid_side_points
+        self.grid_length = grid_side_length
              
     def _reset(self):
         
@@ -150,15 +148,15 @@ class RopeKnotEnv(RopeNewEnv):
 
     def get_default_config(self):
         """ Set the default config of the environment and load it to self.config """
-        length = 0.6
-        radius = 0.005
+        length = 0.75
+        radius = 0.0125
         config = {
             "init_pos": [0., 0., 0.],
-            "stretchstiffness": 0.9,
-            "bendingstiffness": 0.8,
+            "stretchstiffness": 1,
+            "bendingstiffness": 1,
             "radius": radius,
-            "segment": int(length//radius) * 2,
-            "mass": 0.5,
+            "segment": int(length//radius),
+            "mass": 1e-8,
             "scale": 1,
             "camera_name": "default_camera",
             "camera_params": {"default_camera":
@@ -256,7 +254,7 @@ class RopeKnotEnv(RopeNewEnv):
         traj = np.expand_dims(
             simple_trajectory(
                 np.insert(world_waypoints,1,np.zeros(world_waypoints.shape[0]),axis=1),
-                height=0.1,
+                height=self.move_height,
                 num_points_per_leg=50),
             0) # only a single picker
         if self.headless:
@@ -267,7 +265,7 @@ class RopeKnotEnv(RopeNewEnv):
             traj,
             renderer=renderer
         )
-
+        self._step_no_action(50)
         self.maybe_deform_rope(ref_idx=pick_idx,steps=50)
 
         new_pos = pyflex.get_positions()
@@ -531,6 +529,131 @@ class RopeKnotEnv(RopeNewEnv):
             )
         return overlay
 
+class RopeKnotSIM(RopeKnotBASE):
+    ROPE_LINK_LENGTH = 0.0135 # approximate length of a single link.
+    def __init__(self,
+                 goals:Union[Any,Iterable],
+                 random_goal_on_reset:bool = False,
+                 num_reset_deformations:int = 0,
+                 reset_deformation_magnitude:float = 0,
+                 observation_mode:str = "cam_rgb", 
+                 action_mode:str = "picker", 
+                 num_picker:int=1,
+                 render_mode:str='particle',
+                 picker_radius:float=0.02,
+                 device_id:int=-1,
+                 headless:bool=False,
+                 camera_width:int=720,
+                 camera_height:int=720,
+                 camera_name:str='default_camera',
+                 deterministic:bool=True,
+                 num_variations:int=1,
+                 allowed_initial_topologies:Optional[List[topology.RopeTopology]]=None,
+                 use_cached_states:bool=True,
+                 save_cached_states:bool=False, 
+                 force_trivial:bool=False,
+                 cached_states_path:str="rope_knot_init_states.pkl",
+                 **kwargs
+        ):
+        assert observation_mode in ['point_cloud', 'cam_rgb', 'key_point','topology','topo_and_key_point']
+        assert action_mode in ['picker', 'picker_trajectory', 'sawyer', 'franka']
+        
+
+
+        self.headless= headless
+
+        ####################### Flex setup #######################
+        self.camera_params, self.camera_width, self.camera_height, self.camera_name = {}, camera_width, camera_height, camera_name
+        pyflex.init(False, True, camera_width, camera_height)
+
+        if device_id == -1 and 'gpu_id' in os.environ:
+            device_id = int(os.environ['gpu_id'])
+        self.device_id = device_id
+
+        self.deterministic = deterministic
+        self.use_cached_states = use_cached_states
+        self.save_cached_states = save_cached_states
+        self.current_config = self.get_default_config()
+        self.current_config_id = None
+        self.cached_configs, self.cached_init_states = None, None
+        self.num_variations = num_variations
+
+        self.dim_position = 4
+        self.dim_velocity = 3
+        self.dim_shape_state = 14
+        self.particle_num = 0
+
+        # version 1 does not support robot, while version 2 does.
+        pyflex_root = os.environ['PYFLEXROOT']
+        if 'Robotics' in pyflex_root:
+            self.version = 2
+        else:
+            self.version = 1
+
+        ####################### Rope environment setup #######################
+        
+        self.picker_radius = picker_radius
+
+        if action_mode == 'picker':
+            self.action_tool = Picker(
+                num_picker, 
+                picker_radius=picker_radius, 
+                picker_threshold=0.005, 
+                particle_radius=0.025, 
+                picker_low=self.workspace[0,:], 
+                picker_high=self.workspace[1,:]
+            )
+            # self.action_space = self.action_tool.action_space
+        elif action_mode == "picker_trajectory":
+            self.action_tool = PickerTraj(
+                self.num_picker, 
+                picker_radius=self.picker_radius, 
+                picker_threshold=0.005, 
+                particle_radius=0.025, 
+                picker_low=self.workspace[0,:], 
+                picker_high=self.workspace[1,:]
+            )
+        elif action_mode == "move_point":
+            self.action_tool = PickerPickPlace(
+                self.num_picker,
+                picker_low=self.workspace[0,:], 
+                picker_high=self.workspace[1,:]
+            )
+        elif action_mode in ['sawyer', 'franka']:
+            self.action_tool = RobotBase(action_mode)
+
+   
+
+        super().__init__(
+            allowed_initial_topologies=allowed_initial_topologies,
+            random_goal_on_reset=random_goal_on_reset,
+            num_reset_deformations=num_reset_deformations,
+            reset_deformation_magnitude=reset_deformation_magnitude,
+            action_mode=action_mode,
+            observation_mode=observation_mode,
+            num_picker=num_picker
+        )
+
+
+        # Initial state generation
+        self.force_trivial = force_trivial
+        self.get_cached_configs_and_states(cached_states_path, self.num_variations)
+
+        # Observation stuff.
+        self.num_rope_particles:int = self.cached_configs[0]["segment"] + 1
+        dim:int = (self.num_rope_particles-1)*3 + topology.RopeTopologyAction("NA",0).as_array().size # Adds the extra dims needed for the topological action params.
+        self.observation_space:Box = Box(low=-1,high=1,shape=(1,dim))
+    
+        # Misc settings
+        self.move_height = 0.02
+
+        # Final init stuff.
+        self.action_tool.set_picker_pos(np.array([1,1,1]))
+        self._desired_action = None
+
+class RopeKnotROBOT(RopeKnotBASE):
+    pass
+
 def render_with_overlay(base_render,overlay=None):
     def overlay_image(*args,**kwargs):
         base = base_render(*args,**kwargs)
@@ -546,3 +669,29 @@ def render_with_overlay(base_render,overlay=None):
     else:
         return cv2.addWeighted(base_render,0.5,overlay,0.5,0)
 
+
+
+
+class RopeKnotGYM(gym.Env):
+    def __init__(self,env:RopeKnotBASE):
+        self.env=env
+
+        # self.action_space:MultiDiscrete = MultiDiscrete([env.num_rope_particles] + [env.grid_size**2]*3)
+
+    def _get_obs(self):
+        pass
+
+    def _get_info(self):
+        pass
+
+    def reset(self):
+        pass
+
+    def step(self):
+        pass
+
+    def render(self):
+        pass
+
+    def close(self):
+        pass

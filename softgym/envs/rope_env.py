@@ -2,7 +2,7 @@ import numpy as np
 from gym.spaces import Box
 import pyflex
 from softgym.envs.flex_env import FlexEnv
-from softgym.action_space.action_space import Picker, PickerTraj
+from softgym.action_space.action_space import Picker, PickerTraj, PickerPickPlace
 from softgym.action_space.robot_env import RobotBase
 from copy import deepcopy
 
@@ -37,6 +37,8 @@ class RopeNewEnv(FlexEnv):
                 picker_low=self.workspace[0,:], 
                 picker_high=self.workspace[1,:]
             )
+        elif self.action_mode == "move_point":
+            self.action_tool = PickerPickPlace(self.num_picker,picker_low=self.workspace[0,:], picker_high=self.workspace[1,:])
         elif action_mode in ['sawyer', 'franka']:
             self.action_tool = RobotBase(action_mode)
             
